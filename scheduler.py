@@ -4,14 +4,23 @@
 # Calernder based scheduler to switch RF433 sockets     #
 # using cli codesend                                    #
 #                                                       #
-# Extras:						#
-#  - random option (+ random minutes), "r 5" (+ 5min)	#
-#      oder "r 5 10" für verschiedene start/end offsets	#
-#  - sunser/sunrise with random, "s 5" or "s 5 10"      #
-#  - Alternative: r/s 99 r/s 99 für Start/Ende          #
-#      wenn nur eins angegeben ist,                     #
-#      dann wir S je nach Tageszeit gesetzt             #
-# >> 99 brechnet random offset, positiv oder negativ    #
+# Extra options can be defined in the description       #
+# filed of each event, using an ini-style format:       #
+#   [random]                                            #
+#   # add random offset for start/end time              #
+#   # values can be positive or negative                #
+#   # "all" option is applied to start and end          # 
+#   start : max random time in minutes                  #
+#   end : max random time in minutes                    #
+#   all : max random time in minutes                    #
+#                                                       #
+#   [sun]                                               #
+#   # replace the start/end time with the current       #
+#   # sunrise or sunset time +/- offset                 #
+#   start : rise or set                                 #
+#   end : rise or set                                   #
+#   start_offset : offset in minutes                    #
+#   end_offset : offset in minutes                      #
 #                                                       #
 # Matthias Homann                                       #
 # 2017-10-03                                            #
