@@ -35,25 +35,14 @@ from sunrise_sunset import SunriseSunset
 import caldav
 from caldav.elements import dav, cdav
 import RPi.GPIO as GPIO
+import logging, sys
 
-GPIO.setmode(GPIO.BCM)
-GPIO.setwarnings(False)
-
-# Read ini file for RC switch definition
-# keys: oncode, offcode, protocol, pulselength
-# example: switches['switchname']['oncode']
-switches = configparser.ConfigParser()
-switches.sections()
-switches.read('/etc/caltimer/switches.ini')
-# Caldav url
-url = switches['DEFAULT']['caldav']
-# Scheduler intervall in Minuten
-interval = int(switches['DEFAULT']['interval'])
-# Maximum pulse length for GPIO pulses
-max_pulse = float(switches['DEFAULT']['max_pulse'])
-
-# event options
-event_options = configparser.ConfigParser()
+# set logging destination and level
+# level: CRITICAL > ERROR > WARNING INFO > DEBUG > NOTSET
+# filename='example.log' or stream=sys.stderr
+logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+#logging.debug('A debug message!')
+#logging.info('We processed %d records', 10)
 
 
 def print_time(a='Time'):
@@ -91,9 +80,9 @@ def gpio_pulse(switch,onoff,stime):
     else:
       pulsetime=float(switches[switch]['off'])
 # Chek for maximum pulse length, e.g. 10s (configured in switches.ini)
-    if pulsetime>max_pulse:
+    if pulsetime>float(switches['DEFAULT']['max_pulse']):
       print ('The pulse duration of',pulsetime,'s is too long, setting to max=',max_pulse);
-      pulsetime=max_pulse;
+      pulsetime=float(switches['DEFAULT']['max_pulse']);
     s.enterabs(stime,1,GPIO.output,argument=(int(switches[switch]['pin']),1));
     s.enterabs(stime+pulsetime,1,GPIO.output,argument=(int(switches[switch]['pin']),0));
 
@@ -109,15 +98,62 @@ switch_type = {
   'dummy' : dummy_switch,
   }
  
+switches = 0
 
-# Timezone offset
-tzoffset = datetime.today().hour-datetime.utcnow().hour
+#############################################################
+# MAIN                                                      #
+#############################################################
+def main():
 
-client = caldav.DAVClient(url)
-principal = client.principal()
-calendars = principal.calendars()
-if len(calendars) > 0:
+  GPIO.setmode(GPIO.BCM)
+  GPIO.setwarnings(False)
+
+  # Timezone offset
+  tzoffset = datetime.today().hour-datetime.utcnow().hour
+
+  # Read ini file for RC switch definition
+  # keys: oncode, offcode, protocol, pulselength
+  # example: switches['switchname']['oncode']
+  global switches
+  switches = configparser.ConfigParser()
+  switches.sections()
+  switches.read('/etc/caltimer/switches.ini')
+  # Caldav url
+  try:
+    url = switches['DEFAULT']['caldav']
+  except:
+    print('Missing or incorrect ini file, please check /etc/caltimer/switches.ini')
+    return
+  # Scheduler intervall in Minuten
+  interval = int(switches['DEFAULT']['interval'])
+  # Maximum pulse length for GPIO pulses
+  # max_pulse = float(switches['DEFAULT']['max_pulse'])
+
+  # event options
+  event_options = configparser.ConfigParser()
+
+
+  client = caldav.DAVClient(url)
+  try:
+    principal = client.principal()
+  except:
+    e = sys.exc_info()[0]
+    print('Error to access the web calendar:', e )
+    return
+  calendars = principal.calendars()
+  if len(calendars) == 0:
+    print ('No calender found at URL:',url)
+    return
+  
+  if len(calendars) > 0:
     calendar = next((c for c in calendars if c.name == switches['DEFAULT']['calname']), None)
+#    if type(calendar) ==  type(None)  :
+    if calendar is  None:
+      print('Calendar',switches['DEFAULT']['calname'],'not found.')
+      print('Available calendars:')
+      for calendar in calendars:
+        print(calendar.name)
+      return
     print ("Using calendar", calendar)
 
     dt = datetime.today()
@@ -151,6 +187,7 @@ if len(calendars) > 0:
             
     # schedule events
         print_time("Define scheduler at")
+        global s
         s = sched.scheduler(time.time, time.sleep)
         for event in results:
             event.load()
@@ -218,10 +255,10 @@ if len(calendars) > 0:
 
             if s_start:
                 print (e.location.value,"einschlaten um",datetime.fromtimestamp(e_start).strftime('%H:%M:%S'),"{0:+.1f} min".format(r_time_1/60))
-                try:
-                  switch_type[switches[e.location.value]['type']](e.location.value,True,e_start+r_time_1)
-                except:
-                  print('Error:',e.summary.value,'at',e_start,'+',r_time_1,'!')
+#                try:
+                switch_type[switches[e.location.value]['type']](e.location.value,True,e_start+r_time_1)
+#                except:
+#                  print('Error:',e.summary.value,'at',e_start,'+',r_time_1,'!')
             if s_end:
                 print (e.location.value, "ausschalten",datetime.fromtimestamp(e_end).strftime('%H:%M:%S'),"{0:+.1f} min".format(r_time_2/60))
                 try:
@@ -234,4 +271,7 @@ if len(calendars) > 0:
         s.run()
     else:
         print ("No switching events in this time interval.")
+  
 
+if __name__ == "__main__":
+    main()
