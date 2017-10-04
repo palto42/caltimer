@@ -66,7 +66,7 @@ def rc_switch(switch,onoff,stime):
       sendcode=switches[switch]['offcode']
 #    print('RC:',stime, sendcode)
     s.enterabs(stime,1,subprocess.call,
-        argument=(["/home/pi/git/433Utils/RPi_utils/codesend",sendcode,
+        argument=([switches['DEFAULT']['rf433'],sendcode,
         switches[switch]['protocol'],switches[switch]['pulselength']],));
 
 def gpio_switch(switch,onoff,stime):
@@ -117,7 +117,7 @@ client = caldav.DAVClient(url)
 principal = client.principal()
 calendars = principal.calendars()
 if len(calendars) > 0:
-    calendar = next((c for c in calendars if c.name == 'Schaltuhr (Matthias)'), None)
+    calendar = next((c for c in calendars if c.name == switches['DEFAULT']['calname']), None)
     print ("Using calendar", calendar)
 
     dt = datetime.today()
@@ -135,10 +135,10 @@ if len(calendars) > 0:
     #print (len(results))
     if len(results)>0:
         # calculate sunrise and sunset
-        ro = SunriseSunset(datetime.now(), latitude=53.3845,
-            longitude=9.9805, localOffset=2)
+        ro = SunriseSunset(datetime.now(), latitude=float(switches['DEFAULT']['latitude']),
+            longitude=float(switches['DEFAULT']['longitude']), localOffset=float(switches['DEFAULT']['offset']))
         rise_time, set_time = ro.calculate()
-        print ("Sonnenaufgang",rise_time,", Sonnenuntergang", set_time,"\n")
+        print ("Sunrise",rise_time,", Sunset", set_time,"\n")
         if False: # print event list
           for event in results:
             event.load()
@@ -173,7 +173,7 @@ if len(calendars) > 0:
               if event_options.has_option('random','all'):
                 try:
                   r_time_1 = uniform(0,float(event_options['random']['all'])*60) # calculate random value from defined range
-                  r_time_2 = r_time_1
+                  r_time_2 = r_time_1GPIO17
                 except:
                   print ("Random all is incorrect! Format is 'all : 999'")
               if event_options.has_option('random','start'):
@@ -228,5 +228,5 @@ if len(calendars) > 0:
         print()
         s.run()
     else:
-        print ("Keine Schaltzeiten in diesem Intervall.")
+        print ("No switching events in this time interval.")
 
