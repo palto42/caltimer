@@ -136,7 +136,7 @@ if len(calendars) > 0:
     if len(results)>0:
         # calculate sunrise and sunset
         ro = SunriseSunset(datetime.now(), latitude=float(switches['DEFAULT']['latitude']),
-            longitude=float(switches['DEFAULT']['longitude']), localOffset=float(switches['DEFAULT']['offset']))
+            longitude=float(switches['DEFAULT']['longitude']), localOffset=float(switches['DEFAULT']['local_offset']))
         rise_time, set_time = ro.calculate()
         print ("Sunrise",rise_time,", Sunset", set_time,"\n")
         if False: # print event list
@@ -161,11 +161,16 @@ if len(calendars) > 0:
             s_start = e_start >= dt.timestamp() and e_start < dt_end.timestamp()
             s_end = e_end >= dt.timestamp() and e_end < dt_end.timestamp()
 
-            event_options.read_string(e.description.value)
+            try:
+              event_options.read_string(e.description.value)
+            except:
+              print('Description undefined or incorrect')
+              event_options.read_string('[DEFAULT]') # read dummy settings to clear data from previous event
 # print event options
 #            for each_section in event_options.sections():
 #              for (each_key, each_val) in event_options.items(each_section):
 #                print (each_key,':',each_val)
+
             r_time_1 = 0
             r_time_2 = 0
             # if there are random numbers define
@@ -173,7 +178,7 @@ if len(calendars) > 0:
               if event_options.has_option('random','all'):
                 try:
                   r_time_1 = uniform(0,float(event_options['random']['all'])*60) # calculate random value from defined range
-                  r_time_2 = r_time_1GPIO17
+                  r_time_2 = r_time_1
                 except:
                   print ("Random all is incorrect! Format is 'all : 999'")
               if event_options.has_option('random','start'):
