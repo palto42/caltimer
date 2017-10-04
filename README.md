@@ -33,4 +33,5 @@ On Raspbian Jessie I installed pip3 for Python3, which required some extra libra
 
 ## RC transmitter
 There are several web pages decribing how to use a cheap RC433 transmitter on Raspberry Pi.
-I'm using the library https://github.com/ninjablocks/433Utils
+I'm using the library https://github.com/ninjablocks/433Utils since this was the only one which worked with my ZAP switches.
+Unfortunately this library onyl provides a binary an not python code, but the main thing is that it works well ;-)
