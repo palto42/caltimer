@@ -32,6 +32,9 @@ On Raspbian Jessie I installed pip3 for Python3, which required some extra libra
   * sudo apt-get install python3-pip 
 
 ## RC transmitter
-There are several web pages decribing how to use a cheap RC433 transmitter on Raspberry Pi.
+There are several web pages decribing how to use a cheap RF433 transmitter on Raspberry Pi.
 I'm using the library https://github.com/ninjablocks/433Utils since this was the only one which worked with my ZAP switches.
 Unfortunately this library onyl provides a binary an not python code, but the main thing is that it works well ;-)
+The RF433 transmitter is conencted to GPIO 17 (WiringPi 0) and the receiver on GPIO 27 (WiringPi 2). 
+
+The receiver is only used to sniff the switch code if it is not known. It's not required for this scheduler script.
