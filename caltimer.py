@@ -46,7 +46,26 @@ def rc_switch(switch,onoff,stime):
       sendcode=config[switch]['oncode']
     else:
       sendcode=config[switch]['offcode']
-    logging.info('Schedule to send RC code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
+    logging.info('<<< Schedule to send RC code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
+    s.enterabs(stime,1,subprocess.call,
+        argument=([config['DEFAULT']['rf433'],sendcode,
+        config[switch]['protocol'],config[switch]['pulselength']],));
+
+def rc_comag(switch,onoff,stime):
+    # Comag code calculation:
+    # switch 0 = binary "01"
+    # switch 1 = binary "00"
+    # ON       = binary "0001"
+    # OFF      = binary "0100"
+    #
+    # Example:
+    # Channel   Socket    ON/OFF
+    # 0 1 0 0 0 0 0 1 1 0 ON
+    if onoff:
+      sendcode=config[switch]['oncode']
+    else:
+      sendcode=config[switch]['offcode']
+    logging.info('<<< Schedule to send RC code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
     s.enterabs(stime,1,subprocess.call,
         argument=([config['DEFAULT']['rf433'],sendcode,
         config[switch]['protocol'],config[switch]['pulselength']],));
@@ -59,7 +78,7 @@ def gpio_switch(switch,onoff,stime):
       logging.error('GPIO setup error for pin %d',config[switch]['pin'])
 # Can directly use the Boolean variabe onoff since True=1=GPIO.HIGH
     s.enterabs(stime,1,GPIO.output,argument=(int(config[switch]['pin']),onoff));
-    logging.info ('GPIO %s %s at %s',config[switch]['pin'],onoff,time.strftime('%H:%M:%S', time.localtime(stime)));
+    logging.info ('<<< Schedule GPIO %s %s at %s',config[switch]['pin'],onoff,time.strftime('%H:%M:%S', time.localtime(stime)));
 
 def gpio_pulse(switch,onoff,stime):
 # Set the pin to output (just to be sure...)
@@ -76,6 +95,7 @@ def gpio_pulse(switch,onoff,stime):
     if pulsetime>float(config['DEFAULT']['max_pulse']):
       logging.error('The pulse duration of %s s is too long, setting to max= %s',pulsetime,config['DEFAULT']['max_pulse']);
       pulsetime=float(config['DEFAULT']['max_pulse']);
+    logging.info ('<<< Schedule GPIO %s pulse %s at %s',config[switch]['pin'],onoff,time.strftime('%H:%M:%S', time.localtime(stime)));
     s.enterabs(stime,1,GPIO.output,argument=(int(config[switch]['pin']),1));
     s.enterabs(stime+pulsetime,1,GPIO.output,argument=(int(config[switch]['pin']),0));
 
@@ -86,6 +106,7 @@ def dummy_switch(switch,onoff,stime):
 # usage: switch_type[type]()
 switch_type = {
   'rc'    : rc_switch,
+  'comag' : rc_comag,
   'gpio'  : gpio_switch,
   'pulse' : gpio_pulse,
   'dummy' : dummy_switch,
@@ -213,7 +234,7 @@ def main():
           e_end = e.dtend.value.timestamp()
           # check if start/stop events are in current time interval
           s_start = e_start >= dt.timestamp() and e_start < dt_end.timestamp()
-          s_end = e_end >= dt.timestamp() and e_end < dt_end.timestamp()
+          s_end = e_end >= dt.timestamp() and e_end <= dt_end.timestamp()
 
           if s_start or s_end: # process event only if start or end is in current interval
             logging.info('>>> Schedule event: %s starting at %s <<<',e.summary.value,e.dtstart.value.strftime("%H:%M"))
