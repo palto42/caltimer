@@ -2,7 +2,7 @@
 
 #########################################################  
 # Calernder based scheduler to switch RF433 sockets     #
-# using cli codesend                                    #
+# using cli codesend or direct GPIO                     #
 #                                                       #
 # Extra options can be defined in the description       #
 # filed of each event, using an ini-style format:       #
@@ -23,7 +23,7 @@
 #   end_offset : offset in minutes                      #
 #                                                       #
 # Matthias Homann                                       #
-# 2017-10-04                                            #
+# 2017-10-05                                            #
 #########################################################
 
 import configparser
@@ -38,46 +38,46 @@ import RPi.GPIO as GPIO
 import logging, sys
 
 # set initial logging to stderr, level INFO
-logging.basicConfig(stream=sys.stderr, format='%(asctime)s scheduler.py: %(levelname)s : %(message)s', level=logging.INFO)
+logging.basicConfig(stream=sys.stderr, format='%(asctime)s caltimer.py: %(levelname)s : %(message)s', level=logging.INFO)
 
 
 def rc_switch(switch,onoff,stime):
     if onoff:
-      sendcode=switches[switch]['oncode']
+      sendcode=config[switch]['oncode']
     else:
-      sendcode=switches[switch]['offcode']
+      sendcode=config[switch]['offcode']
     logging.info('Schedule to send RC code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
     s.enterabs(stime,1,subprocess.call,
-        argument=([switches['DEFAULT']['rf433'],sendcode,
-        switches[switch]['protocol'],switches[switch]['pulselength']],));
+        argument=([config['DEFAULT']['rf433'],sendcode,
+        config[switch]['protocol'],config[switch]['pulselength']],));
 
 def gpio_switch(switch,onoff,stime):
 # Set the pin to output (just to be sure...)
     try:
-      GPIO.setup(int(switches[switch]['pin']), GPIO.OUT)
+      GPIO.setup(int(config[switch]['pin']), GPIO.OUT)
     except:
-      logging.error('GPIO setup error for pin %d',switches[switch]['pin'])
+      logging.error('GPIO setup error for pin %d',config[switch]['pin'])
 # Can directly use the Boolean variabe onoff since True=1=GPIO.HIGH
-    s.enterabs(stime,1,GPIO.output,argument=(int(switches[switch]['pin']),onoff));
-    logging.info ('GPIO %s %s at %s',switches[switch]['pin'],onoff,time.strftime('%H:%M:%S', time.localtime(stime)));
+    s.enterabs(stime,1,GPIO.output,argument=(int(config[switch]['pin']),onoff));
+    logging.info ('GPIO %s %s at %s',config[switch]['pin'],onoff,time.strftime('%H:%M:%S', time.localtime(stime)));
 
 def gpio_pulse(switch,onoff,stime):
 # Set the pin to output (just to be sure...)
     try:
-      GPIO.setup(int(switches[switch]['pin']), GPIO.OUT)
+      GPIO.setup(int(config[switch]['pin']), GPIO.OUT)
     except:
-      logging.error('GPIO setup error for pin %d',switches[switch]['pin'])
+      logging.error('GPIO setup error for pin %d',config[switch]['pin'])
 # Get the duration of the pulse
     if onoff:
-      pulsetime=float(switches[switch]['on'])
+      pulsetime=float(config[switch]['on'])
     else:
-      pulsetime=float(switches[switch]['off'])
-# Chek for maximum pulse length, e.g. 10s (configured in switches.ini)
-    if pulsetime>float(switches['DEFAULT']['max_pulse']):
-      logging.error('The pulse duration of %s s is too long, setting to max= %s',pulsetime,switches['DEFAULT']['max_pulse']);
-      pulsetime=float(switches['DEFAULT']['max_pulse']);
-    s.enterabs(stime,1,GPIO.output,argument=(int(switches[switch]['pin']),1));
-    s.enterabs(stime+pulsetime,1,GPIO.output,argument=(int(switches[switch]['pin']),0));
+      pulsetime=float(config[switch]['off'])
+# Chek for maximum pulse length, e.g. 10s (configured in config.ini)
+    if pulsetime>float(config['DEFAULT']['max_pulse']):
+      logging.error('The pulse duration of %s s is too long, setting to max= %s',pulsetime,config['DEFAULT']['max_pulse']);
+      pulsetime=float(config['DEFAULT']['max_pulse']);
+    s.enterabs(stime,1,GPIO.output,argument=(int(config[switch]['pin']),1));
+    s.enterabs(stime+pulsetime,1,GPIO.output,argument=(int(config[switch]['pin']),0));
 
 def dummy_switch(switch,onoff,stime):
     s.enterabs(stime,1,logging.warning,argument=('Dummy: %s',onoff));
@@ -100,7 +100,6 @@ loglevel = {
   'NOTSET'   :  0
 }
 
-#switches = 0
 
 #############################################################
 # MAIN                                                      #
@@ -115,42 +114,42 @@ def main():
 
   # Read ini file for RC switch definition
   # keys: oncode, offcode, protocol, pulselength
-  # example: switches['switchname']['oncode']
-  global switches
-  switches = configparser.ConfigParser()
-  switches.sections()
-  switches.read('/etc/caltimer/switches.ini')
+  # example: config['switchname']['oncode']
+  global config
+  config = configparser.ConfigParser()
+  config.sections()
+  config.read('/etc/caltimer/caltimer.ini')
 
   # set logfile
   try:
     # check if logfile is defined and can be opened for write/append
-    logfile=open(switches['LOGGING']['logfile'],'a')
+    logfile=open(config['LOGGING']['logfile'],'a')
     logfile.close()
     # Remove all handlers associated with the root logger object.
     for handler in logging.root.handlers[:]:
       logging.root.removeHandler(handler)
     # Reconfigure logging again, this time with a file.
-    logging.basicConfig(filename = switches['LOGGING']['logfile'], level=logging.INFO, format='%(asctime)s scheduler.py: %(levelname)s : %(message)s')
+    logging.basicConfig(filename = config['LOGGING']['logfile'], level=logging.INFO, format='%(asctime)s caltimer.py: %(levelname)s : %(message)s')
   except:
     logging.error('No (correct) filename defined, using sdterr for logging.')
-  # set logging level if defined in switches.ini
+  # set logging level if defined in caltimer.ini
   try:
-    logging.info('Set loglevel: %s',switches['LOGGING']['loglevel'])
-    logging.getLogger().setLevel(loglevel[switches['LOGGING']['loglevel']])
+    logging.info('Set loglevel: %s',config['LOGGING']['loglevel'])
+    logging.getLogger().setLevel(loglevel[config['LOGGING']['loglevel']])
   except:
     logging.error('No loglevel defined, using ERROR')
     logging.getLogger().setLevel(logging.ERROR)
  
   # Caldav url
   try:
-    url = switches['CALENDAR']['caldav']
+    url = config['CALENDAR']['caldav']
   except:
-    logging.error('Missing or incorrect ini file, please check /etc/caltimer/switches.ini')
+    logging.error('Missing or incorrect ini file, please check /etc/caltimer/caltimer.ini')
     return
   # Scheduler intervall in Minuten
-  interval = int(switches['CALENDAR']['interval'])
+  interval = int(config['CALENDAR']['interval'])
   # Maximum pulse length for GPIO pulses
-  # max_pulse = float(switches['DEFAULT']['max_pulse'])
+  # max_pulse = float(config['DEFAULT']['max_pulse'])
 
   # event options
   event_options = configparser.ConfigParser()
@@ -169,9 +168,9 @@ def main():
     return
   
   if len(calendars) > 0:
-    calendar = next((c for c in calendars if c.name == switches['CALENDAR']['calname']), None)
+    calendar = next((c for c in calendars if c.name == config['CALENDAR']['calname']), None)
     if calendar is  None:
-      logging.error('Calendar %s not found.',switches['CALENDAR']['calname'])
+      logging.error('Calendar %s not found.',config['CALENDAR']['calname'])
       logging.error('Available calendars:')
       for calendar in calendars:
         logging.error('  %s ',calendar.name)
@@ -193,8 +192,8 @@ def main():
     logging.info('%s events found for defined period.',len(results))
     if len(results)>0:
         # calculate sunrise and sunset
-        ro = SunriseSunset(datetime.now(), latitude=float(switches['CALENDAR']['latitude']),
-            longitude=float(switches['CALENDAR']['longitude']), localOffset=float(switches['CALENDAR']['local_offset']))
+        ro = SunriseSunset(datetime.now(), latitude=float(config['CALENDAR']['latitude']),
+            longitude=float(config['CALENDAR']['longitude']), localOffset=float(config['CALENDAR']['local_offset']))
         rise_time, set_time = ro.calculate()
         logging.info('Sunrise %s, sunset %s',rise_time, set_time)
         for event in results:
@@ -206,7 +205,7 @@ def main():
               logging.info ('Description:\n%s', e.description.value)
             except:
               logging.info ('No description available.')
-            if not e.location.value in switches:
+            if not e.location.value in config:
               logging.error ('Undefined RC-switch %s',e.location.value)
             
     # schedule events
@@ -282,13 +281,13 @@ def main():
             if s_start:
                 logging.info('Switch on %s at %s %+.1f min',e.location.value,datetime.fromtimestamp(e_start).strftime('%H:%M:%S'),r_time_1/60)
                 try:
-                  switch_type[switches[e.location.value]['type']](e.location.value,True,e_start+r_time_1)
+                  switch_type[config[e.location.value]['type']](e.location.value,True,e_start+r_time_1)
                 except:
                   logging.error('Error: %s at %s + %s',e.summary.value,e_start,r_time_1,'!')
             if s_end:
                 logging.info('Switch off %s at %s %+.1f min',e.location.value, datetime.fromtimestamp(e_end).strftime('%H:%M:%S'),r_time_2/60)
                 try:
-                  switch_type[switches[e.location.value]['type']](e.location.value,False,e_end+r_time_2)
+                  switch_type[config[e.location.value]['type']](e.location.value,False,e_end+r_time_2)
                 except:
                   logging.error('Error for %s at %s+ %s',e.summary.value,e_end,r_time_2)
         logging.debug('Scheduler queue:\n%s',s.queue)

@@ -2,6 +2,10 @@
 The idea of this project is to control different power switches via web-calender entries. 
 I'm using Nextcloud to host the calendar, but any other server with a caldav interfce should work.
 
+The script needs to be called regularly by a cron job to check for calender entries and 
+schedule the switching events. The time interval for calling teh script is defined in
+the configuration file /etc/caltimer/caltimer.ini
+
 Supported switched:
 * RC power plugs via 433 MHz transmitter (connected to Raspberry Pi GPIO)
 * Switch conencted directly to a GPIO port
@@ -10,6 +14,7 @@ Supported switched:
 
 ## Config file
 The Python script uses an ini file to define the available swithce and some general settings.
+The ini file needs to be stored as /etc/caltimer/caltimer.ini
 
 ## Timer entries
 For each switch time a calendar entry is added with an aritrary summary, the location containing teh switch name 
