@@ -192,42 +192,44 @@ def main():
     
     logging.info('%s events found for defined period.',len(results))
     if len(results)>0:
-        # calculate sunrise and sunset
-        ro = SunriseSunset(datetime.now(), latitude=float(config['CALENDAR']['latitude']),
-            longitude=float(config['CALENDAR']['longitude']), localOffset=float(config['CALENDAR']['local_offset']))
-        rise_time, set_time = ro.calculate()
-        logging.info('Sunrise %s, sunset %s',rise_time, set_time)
-        for event in results:
-            event.load()
-            e = event.instance.vevent
-            logging.info('Start: %s, end: %s', e.dtstart.value.strftime("%H:%M"), e.dtend.value.strftime("%H:%M"))
-            logging.info('Summary: %s, location: %s', e.summary.value, e.location.value);
-            try: # description may not be available
-              logging.info ('Description:\n%s', e.description.value)
-            except:
-              logging.info ('No description available.')
-            if not e.location.value in config:
-              logging.error ('Undefined RC-switch %s',e.location.value)
-            
-    # schedule events
-        logging.info('Define scheduler')
-        global s
-        s = sched.scheduler(time.time, time.sleep)
-        for event in results:
-            event.load()
-            e = event.instance.vevent
-            e_start = e.dtstart.value.timestamp()
-            e_end = e.dtend.value.timestamp()
-            # check if start/stop events are in current time interval
-            s_start = e_start >= dt.timestamp() and e_start < dt_end.timestamp()
-            s_end = e_end >= dt.timestamp() and e_end < dt_end.timestamp()
+      # calculate sunrise and sunset
+      ro = SunriseSunset(datetime.now(), latitude=float(config['CALENDAR']['latitude']),
+          longitude=float(config['CALENDAR']['longitude']), localOffset=float(config['CALENDAR']['local_offset']))
+      rise_time, set_time = ro.calculate()
+      logging.info('Sunrise %s, sunset %s',rise_time, set_time)
 
+      # schedule events
+      logging.info('Define scheduler')
+      global s
+      s = sched.scheduler(time.time, time.sleep)
+      for event in results:
+        event.load()
+        e = event.instance.vevent
+        if not e.location.value in config:
+          logging.error ('>>> Event "%s" at %s has an undefined RC-switch "%s", skipping this event.',
+            e.summary.value, e.dtstart.value.strftime("%H:%M"), e.location.value)
+        else:
+          e_start = e.dtstart.value.timestamp()
+          e_end = e.dtend.value.timestamp()
+          # check if start/stop events are in current time interval
+          s_start = e_start >= dt.timestamp() and e_start < dt_end.timestamp()
+          s_end = e_end >= dt.timestamp() and e_end < dt_end.timestamp()
+
+          if s_start or s_end: # process event only if start or end is in current interval
+            logging.info('>>> Schedule event: %s starting at %s <<<',e.summary.value,e.dtstart.value.strftime("%H:%M"))
+            event_options = configparser.ConfigParser() # clear event options from previous event
             try:
-              event_options.read_string(e.description.value)
+              description = e.description.value
             except:
-              logging.warning('Description undefined or incorrect for event %s at %s',e.summary.value,e.dtstart.value.strftime("%H:%M"))
-              event_options.read_string('[DEFAULT]') # read dummy settings to clear data from previous event
-# logging event options
+              logging.info('No description for this event')
+              description = '[DEFAULT]' # define empyt description to clear previous
+            try:
+              event_options.read_string(description)
+              logging.info('Description: %s',description)
+            except:
+              logging.warning('Description incorrect for this event, treating as empty (no options)')
+
+            # logging event options at INFO level
             if  logging.getLogger().getEffectiveLevel() <= logging.INFO:
               logging.info('This event options have been found:')
               for each_section in event_options.sections():
@@ -291,12 +293,14 @@ def main():
                   switch_type[config[e.location.value]['type']](e.location.value,False,e_end+r_time_2)
                 except:
                   logging.error('Error for %s at %s+ %s',e.summary.value,e_end,r_time_2)
-        logging.debug('Scheduler queue:\n%s',s.queue)
-        logging.info('Start scheduler at %s',time.strftime('%H:%M:%S'))
-        s.run()
-        logging.info('All scheduled events completed.')
+
+      logging.debug('Scheduler queue:\n%s',s.queue)
+      logging.info('Start scheduler at %s',time.strftime('%H:%M:%S'))
+      s.run()
+      logging.info('All scheduled events completed.')
+
     else:
-        logging.info('No switching events in this time interval.')
+      logging.info('No calendar events in this time interval.')
   
 
 if __name__ == '__main__':
