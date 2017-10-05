@@ -133,6 +133,7 @@ def main():
   except:
     logging.error('No (correct) filename defined, using sdterr for logging.')
   # set logging level if defined in caltimer.ini
+  logging.info('-----------------------------------------------------------------')
   try:
     logging.info('Set loglevel: %s',config['LOGGING']['loglevel'])
     logging.getLogger().setLevel(loglevel[config['LOGGING']['loglevel']])

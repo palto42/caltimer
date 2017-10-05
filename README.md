@@ -16,6 +16,14 @@ Supported switched:
 The Python script uses an ini file to define the available swithce and some general settings.
 The ini file needs to be stored as /etc/caltimer/caltimer.ini
 
+## Cron
+If the interval is set to 15 minutes, a cron job needs to run every 15 min as well. Best is to start the 
+cron job about 1 min before each interval:
+```
+# calendar timer
+14-59/15 *  * * *   root    /opt/caltimer/caltimer.py
+```
+
 ## Timer entries
 For each switch time a calendar entry is added with an aritrary summary, the location containing teh switch name 
 (as per ini file) and an optional description with extra settings. 
