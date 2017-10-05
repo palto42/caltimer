@@ -145,9 +145,10 @@ def main():
     
   try:
     # check if logfile is defined and can be opened for read
-    logfile=open(config['LOGGING']['logfile'],'a')
+    logfile=open(config['LOGGING']['logfile'],'r')
     logfile.close()
     log_exists = True
+#    print ('File exists',log_exists)
   except:
     log_exists = False
   try:
@@ -161,13 +162,18 @@ def main():
     logging.basicConfig(filename = config['LOGGING']['logfile'], level=logging.INFO, format='%(asctime)s caltimer.py: %(levelname)s : %(message)s')
   except:
     if log_exists:
-      temp_log = config['LOGGING']['logfile'][-3]+time.strftime("_%y-%m-%d_%H-%M")+".log"
+      temp_log = config['LOGGING']['logfile'][:-4]+time.strftime("_%y-%m-%d_%H-%M")+".log"
       logging.error('Logfile is already in use by other process, using temp logfile: %s',temp_log)
-      # Remove all handlers associated with the root logger object.
-      for handler in logging.root.handlers[:]:
-        logging.root.removeHandler(handler)
-      # Reconfigure logging again, this time with a file.
-      logging.basicConfig(filename = temp_log, level=logging.INFO, format='%(asctime)s caltimer.py: %(levelname)s : %(message)s')
+      try: # try to open new logfile write
+        logfile=open(temp_log,'w')
+        logfile.close()
+        # Remove all handlers associated with the root logger object.
+        for handler in logging.root.handlers[:]:
+          logging.root.removeHandler(handler)
+        # Reconfigure logging again, this time with a file.
+        logging.basicConfig(filename = temp_log, level=logging.INFO, format='%(asctime)s caltimer.py: %(levelname)s : %(message)s')
+      except:
+        logging.error('No write access for temp logfile, using sdterr for logging.') 
     else:
       logging.error('No (correct) filename defined, using sdterr for logging.')
   # set logging level if defined in caltimer.ini
