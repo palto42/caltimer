@@ -23,7 +23,7 @@
 #   end_offset : offset in minutes                      #
 #                                                       #
 # Matthias Homann                                       #
-# 2017-10-03                                            #
+# 2017-10-04                                            #
 #########################################################
 
 import configparser
@@ -37,12 +37,8 @@ from caldav.elements import dav, cdav
 import RPi.GPIO as GPIO
 import logging, sys
 
-# set logging destination and level
-# level: CRITICAL > ERROR > WARNING INFO > DEBUG > NOTSET
-# filename='example.log' or stream=sys.stderr
+# set initial logging to stderr, level INFO
 logging.basicConfig(stream=sys.stderr, format='%(asctime)s scheduler.py: %(levelname)s : %(message)s', level=logging.INFO)
-#logging.debug('A debug message!')
-#logging.info('We processed %d records', 10)
 
 
 def rc_switch(switch,onoff,stime):
@@ -298,6 +294,7 @@ def main():
         logging.debug('Scheduler queue:\n%s',s.queue)
         logging.info('Start scheduler at %s',time.strftime('%H:%M:%S'))
         s.run()
+        logging.info('All scheduled events completed.')
     else:
         logging.info('No switching events in this time interval.')
   
