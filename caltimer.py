@@ -36,6 +36,7 @@ import caldav
 from caldav.elements import dav, cdav
 import RPi.GPIO as GPIO
 import logging, sys
+from rpi_rf import RFDevice
 
 # set initial logging to stderr, level INFO
 logging.basicConfig(stream=sys.stderr, format='%(asctime)s caltimer.py: %(levelname)s : %(message)s', level=logging.INFO)
@@ -55,20 +56,29 @@ def rc_comag(switch,onoff,stime):
     # Comag code calculation:
     # switch 0 = binary "01"
     # switch 1 = binary "00"
-    # ON       = binary "0001"
-    # OFF      = binary "0100"
+    # ON  = 10 = binary "0001"
+    # OFF = 01 = binary "0100"
     #
     # Example:
     # Channel   Socket    ON/OFF
-    # 0 1 0 0 0 0 0 1 1 0 ON
+    # 0 1 0 0 0 0 0 1 1 0 10/01
+
+    # Create binary code
+    bincode = config[switch]['system'] + config[switch]['receiver']
     if onoff:
-      sendcode=config[switch]['oncode']
+      bincode += '10'
     else:
-      sendcode=config[switch]['offcode']
+      bincode += '01'
+    logging.debug('*** Comag binary code = %s',bincode)
+    # translate
+    sendcode = 0
+    for c in bincode:
+      sendcode = sendcode << 2
+      if c == "0":
+        sendcode = sendcode | 1
+    logging.debug('*** Comag sendcode = %s','{:08b}'.format(sendcode))   
     logging.info('<<< Schedule to send RC code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
-    s.enterabs(stime,1,subprocess.call,
-        argument=([config['DEFAULT']['rf433'],sendcode,
-        config[switch]['protocol'],config[switch]['pulselength']],));
+    s.enterabs(stime,1,rfdevice.tx_code,argument=(sendcode, 1, 350));
 
 def gpio_switch(switch,onoff,stime):
 # Set the pin to output (just to be sure...)
@@ -127,12 +137,6 @@ loglevel = {
 #############################################################
 def main():
 
-  GPIO.setmode(GPIO.BCM)
-  GPIO.setwarnings(False)
-
-  # Timezone offset
-  tzoffset = datetime.today().hour-datetime.utcnow().hour
-
   # Read ini file for RC switch definition
   # keys: oncode, offcode, protocol, pulselength
   # example: config['switchname']['oncode']
@@ -140,6 +144,18 @@ def main():
   config = configparser.ConfigParser()
   config.sections()
   config.read('/etc/caltimer/caltimer.ini')
+
+  # Raspberry Pi GPIO settings
+  GPIO.setmode(GPIO.BCM)
+  GPIO.setwarnings(False)
+
+  # Enable RF transmitter
+  global rfdevice 
+  rfdevice = RFDevice(int(config['DEFAULT']['gpio']))
+  rfdevice.enable_tx()
+
+  # Timezone offset
+  tzoffset = datetime.today().hour-datetime.utcnow().hour
 
   # set logfile
     
