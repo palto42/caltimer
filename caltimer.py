@@ -26,20 +26,22 @@
 # 2017-10-05                                            #
 #########################################################
 
+import logging
+import sys
 import configparser
 import subprocess
-from random import uniform
-import sched, time
+import sched
+import time
 from datetime import datetime, date, timedelta
-from sunrise_sunset import SunriseSunset
+from random import uniform
 import caldav
 from caldav.elements import dav, cdav
+from sunrise_sunset import SunriseSunset
 import RPi.GPIO as GPIO
-import logging, sys
 from rpi_rf import RFDevice
 
 # set initial logging to stderr, level INFO
-logging.basicConfig(stream=sys.stderr, format='%(asctime)s caltimer.py: %(levelname)s : %(message)s', level=logging.INFO)
+logging.basicConfig(stream=sys.stderr, format='%(asctime)s - %(module)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 
 def rc_switch(switch,onoff,stime):
@@ -187,7 +189,7 @@ def main():
         for handler in logging.root.handlers[:]:
           logging.root.removeHandler(handler)
         # Reconfigure logging again, this time with a file.
-        logging.basicConfig(filename = temp_log, level=logging.INFO, format='%(asctime)s caltimer.py: %(levelname)s : %(message)s')
+        logging.basicConfig(filename = temp_log, level=logging.INFO, format='%(asctime)s - %(module)s - %(levelname)s : %(message)s')
       except:
         logging.error('No write access for temp logfile, using sdterr for logging.') 
     else:
@@ -289,13 +291,13 @@ def main():
             except:
               logging.warning('Description incorrect for this event, treating as empty (no options)')
 
-            # logging event options at INFO level
-            if  logging.getLogger().getEffectiveLevel() <= logging.INFO:
-              logging.info('This event options have been found:')
+            # logging event options at DEBUG level
+            if  logging.getLogger().getEffectiveLevel() <= logging.DEBUG:
+              logging.debug('This event options have been found:')
               for each_section in event_options.sections():
-                logging.info ('Section  %s :',each_section)
+                logging.debug ('Section  %s :',each_section)
                 for (each_key, each_val) in event_options.items(each_section):
-                  logging.info ('  %s : %s',each_key,each_val)
+                  logging.debug ('  %s : %s',each_key,each_val)
 
             r_time_1 = 0
             r_time_2 = 0
@@ -325,10 +327,11 @@ def main():
                   e_start=set_time.timestamp()
                 else:
                   logging.error('Sunrise start time option is incorrect, valid options are "rise" or "set"')
-                try: # add start offset
-                  e_start=e_start+(float(event_options['sun']['start_offset'])*60) # sunrise + offset
-                except:
-                  logging.error('Sunrise start offset format is incorrect! Format is "start_offset : 999"')
+                if event_options.has_option('sun','start_offset'):
+                  try: # add start offset
+                    e_start=e_start+(float(event_options['sun']['start_offset'])*60) # sunrise + offset
+                  except:
+                    logging.error('Sunrise start offset format is incorrect! Format is "start_offset : 999"')
             if event_options.has_section('sun'):
               if event_options.has_option('sun','end'):
                 if event_options['sun']['end'] == "rise":
@@ -337,30 +340,31 @@ def main():
                   e_end=set_time.timestamp()
                 else:
                   logging.error('Sunrise end time option is incorrect, valid options are "rise" or "set"')
-                try: # add end offset
-                  e_end=e_end+(float(event_options['sun']['end_offset'])*60) # sunset + offset  
-                except:
-                  logging.error('Sunset end offset format is incorrect! Format is "end_offset : 999"')
+                if event_options.has_option('sun','end_offset'):
+                  try: # add end offset
+                    e_end=e_end+(float(event_options['sun']['end_offset'])*60) # sunset + offset  
+                  except:
+                    logging.error('Sunset end offset format is incorrect! Format is "end_offset : 999"')
             if s_start:
                 logging.info('Switch on %s at %s %+.1f min',e.location.value,datetime.fromtimestamp(e_start).strftime('%H:%M:%S'),r_time_1/60)
                 try:
                   switch_type[config[e.location.value]['type']](e.location.value,True,e_start+r_time_1)
                 except:
-                  logging.error('Error: %s at %s + %s',e.summary.value,e_start,r_time_1,'!')
+                  logging.critical('Error: %s at %s + %s',e.summary.value,e_start,r_time_1,'!')
             if s_end:
                 logging.info('Switch off %s at %s %+.1f min',e.location.value, datetime.fromtimestamp(e_end).strftime('%H:%M:%S'),r_time_2/60)
                 try:
                   switch_type[config[e.location.value]['type']](e.location.value,False,e_end+r_time_2)
                 except:
-                  logging.error('Error for %s at %s+ %s',e.summary.value,e_end,r_time_2)
+                  logging.critical('Error for %s at %s+ %s',e.summary.value,e_end,r_time_2)
 
       logging.debug('Scheduler queue:\n%s',s.queue)
       logging.info('Start scheduler at %s',time.strftime('%H:%M:%S'))
       s.run()
-      logging.info('All scheduled events completed.')
+      logging.info('<><><> Completed scheduled events for this time interval. <><><>')
 
     else:
-      logging.info('No calendar events in this time interval.')
+      logging.info('<><> No calendar events in this time interval. <><>')
   
 
 if __name__ == '__main__':
