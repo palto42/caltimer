@@ -26,19 +26,22 @@
 # 2017-10-05                                            #
 #########################################################
 
+import logging
+import sys
 import configparser
 import subprocess
-from random import uniform
-import sched, time
+import sched
+import time
 from datetime import datetime, date, timedelta
-from sunrise_sunset import SunriseSunset
+from random import uniform
 import caldav
 from caldav.elements import dav, cdav
+from sunrise_sunset import SunriseSunset
 import RPi.GPIO as GPIO
-import logging, sys
+from rpi_rf import RFDevice
 
 # set initial logging to stderr, level INFO
-logging.basicConfig(stream=sys.stderr, format='%(asctime)s caltimer.py: %(levelname)s : %(message)s', level=logging.INFO)
+logging.basicConfig(stream=sys.stderr, format='%(asctime)s - %(module)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 
 def rc_switch(switch,onoff,stime):
@@ -46,10 +49,38 @@ def rc_switch(switch,onoff,stime):
       sendcode=config[switch]['oncode']
     else:
       sendcode=config[switch]['offcode']
-    logging.info('Schedule to send RC code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
+    logging.info('<<< Schedule to send RC code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
     s.enterabs(stime,1,subprocess.call,
         argument=([config['DEFAULT']['rf433'],sendcode,
         config[switch]['protocol'],config[switch]['pulselength']],));
+
+def rc_comag(switch,onoff,stime):
+    # Comag code calculation:
+    # switch 0 = binary "01"
+    # switch 1 = binary "00"
+    # ON  = 10 = binary "0001"
+    # OFF = 01 = binary "0100"
+    #
+    # Example:
+    # Channel   Socket    ON/OFF
+    # 0 1 0 0 0 0 0 1 1 0 10/01
+
+    # Create binary code
+    bincode = config[switch]['system'] + config[switch]['receiver']
+    if onoff:
+      bincode += '10'
+    else:
+      bincode += '01'
+    logging.debug('*** Comag binary code = %s',bincode)
+    # translate
+    sendcode = 0
+    for c in bincode:
+      sendcode = sendcode << 2
+      if c == "0":
+        sendcode = sendcode | 1
+    logging.debug('*** Comag sendcode = %s','{:08b}'.format(sendcode))   
+    logging.info('<<< Schedule to send RC code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
+    s.enterabs(stime,1,rfdevice.tx_code,argument=(sendcode, 1, 350));
 
 def gpio_switch(switch,onoff,stime):
 # Set the pin to output (just to be sure...)
@@ -59,7 +90,7 @@ def gpio_switch(switch,onoff,stime):
       logging.error('GPIO setup error for pin %d',config[switch]['pin'])
 # Can directly use the Boolean variabe onoff since True=1=GPIO.HIGH
     s.enterabs(stime,1,GPIO.output,argument=(int(config[switch]['pin']),onoff));
-    logging.info ('GPIO %s %s at %s',config[switch]['pin'],onoff,time.strftime('%H:%M:%S', time.localtime(stime)));
+    logging.info ('<<< Schedule GPIO %s %s at %s',config[switch]['pin'],onoff,time.strftime('%H:%M:%S', time.localtime(stime)));
 
 def gpio_pulse(switch,onoff,stime):
 # Set the pin to output (just to be sure...)
@@ -76,6 +107,7 @@ def gpio_pulse(switch,onoff,stime):
     if pulsetime>float(config['DEFAULT']['max_pulse']):
       logging.error('The pulse duration of %s s is too long, setting to max= %s',pulsetime,config['DEFAULT']['max_pulse']);
       pulsetime=float(config['DEFAULT']['max_pulse']);
+    logging.info ('<<< Schedule GPIO %s pulse %s at %s',config[switch]['pin'],onoff,time.strftime('%H:%M:%S', time.localtime(stime)));
     s.enterabs(stime,1,GPIO.output,argument=(int(config[switch]['pin']),1));
     s.enterabs(stime+pulsetime,1,GPIO.output,argument=(int(config[switch]['pin']),0));
 
@@ -86,6 +118,7 @@ def dummy_switch(switch,onoff,stime):
 # usage: switch_type[type]()
 switch_type = {
   'rc'    : rc_switch,
+  'comag' : rc_comag,
   'gpio'  : gpio_switch,
   'pulse' : gpio_pulse,
   'dummy' : dummy_switch,
@@ -106,12 +139,6 @@ loglevel = {
 #############################################################
 def main():
 
-  GPIO.setmode(GPIO.BCM)
-  GPIO.setwarnings(False)
-
-  # Timezone offset
-  tzoffset = datetime.today().hour-datetime.utcnow().hour
-
   # Read ini file for RC switch definition
   # keys: oncode, offcode, protocol, pulselength
   # example: config['switchname']['oncode']
@@ -120,7 +147,28 @@ def main():
   config.sections()
   config.read('/etc/caltimer/caltimer.ini')
 
+  # Raspberry Pi GPIO settings
+  GPIO.setmode(GPIO.BCM)
+  GPIO.setwarnings(False)
+
+  # Enable RF transmitter
+  global rfdevice 
+  rfdevice = RFDevice(int(config['DEFAULT']['gpio']))
+  rfdevice.enable_tx()
+
+  # Timezone offset
+  tzoffset = datetime.today().hour-datetime.utcnow().hour
+
   # set logfile
+    
+  try:
+    # check if logfile is defined and can be opened for read
+    logfile=open(config['LOGGING']['logfile'],'r')
+    logfile.close()
+    log_exists = True
+#    print ('File exists',log_exists)
+  except:
+    log_exists = False
   try:
     # check if logfile is defined and can be opened for write/append
     logfile=open(config['LOGGING']['logfile'],'a')
@@ -131,7 +179,21 @@ def main():
     # Reconfigure logging again, this time with a file.
     logging.basicConfig(filename = config['LOGGING']['logfile'], level=logging.INFO, format='%(asctime)s caltimer.py: %(levelname)s : %(message)s')
   except:
-    logging.error('No (correct) filename defined, using sdterr for logging.')
+    if log_exists:
+      temp_log = config['LOGGING']['logfile'][:-4]+time.strftime("_%y-%m-%d_%H-%M")+".log"
+      logging.error('Logfile is already in use by other process, using temp logfile: %s',temp_log)
+      try: # try to open new logfile write
+        logfile=open(temp_log,'w')
+        logfile.close()
+        # Remove all handlers associated with the root logger object.
+        for handler in logging.root.handlers[:]:
+          logging.root.removeHandler(handler)
+        # Reconfigure logging again, this time with a file.
+        logging.basicConfig(filename = temp_log, level=logging.INFO, format='%(asctime)s - %(module)s - %(levelname)s : %(message)s')
+      except:
+        logging.error('No write access for temp logfile, using sdterr for logging.') 
+    else:
+      logging.error('No (correct) filename defined, using sdterr for logging.')
   # set logging level if defined in caltimer.ini
   logging.info('-----------------------------------------------------------------')
   try:
@@ -192,48 +254,50 @@ def main():
     
     logging.info('%s events found for defined period.',len(results))
     if len(results)>0:
-        # calculate sunrise and sunset
-        ro = SunriseSunset(datetime.now(), latitude=float(config['CALENDAR']['latitude']),
-            longitude=float(config['CALENDAR']['longitude']), localOffset=float(config['CALENDAR']['local_offset']))
-        rise_time, set_time = ro.calculate()
-        logging.info('Sunrise %s, sunset %s',rise_time, set_time)
-        for event in results:
-            event.load()
-            e = event.instance.vevent
-            logging.info('Start: %s, end: %s', e.dtstart.value.strftime("%H:%M"), e.dtend.value.strftime("%H:%M"))
-            logging.info('Summary: %s, location: %s', e.summary.value, e.location.value);
-            try: # description may not be available
-              logging.info ('Description:\n%s', e.description.value)
-            except:
-              logging.info ('No description available.')
-            if not e.location.value in config:
-              logging.error ('Undefined RC-switch %s',e.location.value)
-            
-    # schedule events
-        logging.info('Define scheduler')
-        global s
-        s = sched.scheduler(time.time, time.sleep)
-        for event in results:
-            event.load()
-            e = event.instance.vevent
-            e_start = e.dtstart.value.timestamp()
-            e_end = e.dtend.value.timestamp()
-            # check if start/stop events are in current time interval
-            s_start = e_start >= dt.timestamp() and e_start < dt_end.timestamp()
-            s_end = e_end >= dt.timestamp() and e_end < dt_end.timestamp()
+      # calculate sunrise and sunset
+      ro = SunriseSunset(datetime.now(), latitude=float(config['CALENDAR']['latitude']),
+          longitude=float(config['CALENDAR']['longitude']), localOffset=float(config['CALENDAR']['local_offset']))
+      rise_time, set_time = ro.calculate()
+      logging.info('Sunrise %s, sunset %s',rise_time, set_time)
 
+      # schedule events
+      logging.info('Define scheduler')
+      global s
+      s = sched.scheduler(time.time, time.sleep)
+      for event in results:
+        event.load()
+        e = event.instance.vevent
+        if not e.location.value in config:
+          logging.error ('>>> Event "%s" at %s has an undefined RC-switch "%s", skipping this event.',
+            e.summary.value, e.dtstart.value.strftime("%H:%M"), e.location.value)
+        else:
+          e_start = e.dtstart.value.timestamp()
+          e_end = e.dtend.value.timestamp()
+          # check if start/stop events are in current time interval
+          s_start = e_start >= dt.timestamp() and e_start < dt_end.timestamp()
+          s_end = e_end >= dt.timestamp() and e_end <= dt_end.timestamp()
+
+          if s_start or s_end: # process event only if start or end is in current interval
+            logging.info('>>> Schedule event: %s starting at %s <<<',e.summary.value,e.dtstart.value.strftime("%H:%M"))
+            event_options = configparser.ConfigParser() # clear event options from previous event
             try:
-              event_options.read_string(e.description.value)
+              description = e.description.value
             except:
-              logging.warning('Description undefined or incorrect for event %s at %s',e.summary.value,e.dtstart.value.strftime("%H:%M"))
-              event_options.read_string('[DEFAULT]') # read dummy settings to clear data from previous event
-# logging event options
-            if  logging.getLogger().getEffectiveLevel() <= logging.INFO:
-              logging.info('This event options have been found:')
+              logging.info('No description for this event')
+              description = '[DEFAULT]' # define empyt description to clear previous
+            try:
+              event_options.read_string(description)
+              logging.info('Description: %s',description)
+            except:
+              logging.warning('Description incorrect for this event, treating as empty (no options)')
+
+            # logging event options at DEBUG level
+            if  logging.getLogger().getEffectiveLevel() <= logging.DEBUG:
+              logging.debug('This event options have been found:')
               for each_section in event_options.sections():
-                logging.info ('Section  %s :',each_section)
+                logging.debug ('Section  %s :',each_section)
                 for (each_key, each_val) in event_options.items(each_section):
-                  logging.info ('  %s : %s',each_key,each_val)
+                  logging.debug ('  %s : %s',each_key,each_val)
 
             r_time_1 = 0
             r_time_2 = 0
@@ -263,10 +327,11 @@ def main():
                   e_start=set_time.timestamp()
                 else:
                   logging.error('Sunrise start time option is incorrect, valid options are "rise" or "set"')
-                try: # add start offset
-                  e_start=e_start+(float(event_options['sun']['start_offset'])*60) # sunrise + offset
-                except:
-                  logging.error('Sunrise start offset format is incorrect! Format is "start_offset : 999"')
+                if event_options.has_option('sun','start_offset'):
+                  try: # add start offset
+                    e_start=e_start+(float(event_options['sun']['start_offset'])*60) # sunrise + offset
+                  except:
+                    logging.error('Sunrise start offset format is incorrect! Format is "start_offset : 999"')
             if event_options.has_section('sun'):
               if event_options.has_option('sun','end'):
                 if event_options['sun']['end'] == "rise":
@@ -275,28 +340,31 @@ def main():
                   e_end=set_time.timestamp()
                 else:
                   logging.error('Sunrise end time option is incorrect, valid options are "rise" or "set"')
-                try: # add end offset
-                  e_end=e_end+(float(event_options['sun']['end_offset'])*60) # sunset + offset  
-                except:
-                  logging.error('Sunset end offset format is incorrect! Format is "end_offset : 999"')
+                if event_options.has_option('sun','end_offset'):
+                  try: # add end offset
+                    e_end=e_end+(float(event_options['sun']['end_offset'])*60) # sunset + offset  
+                  except:
+                    logging.error('Sunset end offset format is incorrect! Format is "end_offset : 999"')
             if s_start:
                 logging.info('Switch on %s at %s %+.1f min',e.location.value,datetime.fromtimestamp(e_start).strftime('%H:%M:%S'),r_time_1/60)
                 try:
                   switch_type[config[e.location.value]['type']](e.location.value,True,e_start+r_time_1)
                 except:
-                  logging.error('Error: %s at %s + %s',e.summary.value,e_start,r_time_1,'!')
+                  logging.critical('Error: %s at %s + %s',e.summary.value,e_start,r_time_1,'!')
             if s_end:
                 logging.info('Switch off %s at %s %+.1f min',e.location.value, datetime.fromtimestamp(e_end).strftime('%H:%M:%S'),r_time_2/60)
                 try:
                   switch_type[config[e.location.value]['type']](e.location.value,False,e_end+r_time_2)
                 except:
-                  logging.error('Error for %s at %s+ %s',e.summary.value,e_end,r_time_2)
-        logging.debug('Scheduler queue:\n%s',s.queue)
-        logging.info('Start scheduler at %s',time.strftime('%H:%M:%S'))
-        s.run()
-        logging.info('All scheduled events completed.')
+                  logging.critical('Error for %s at %s+ %s',e.summary.value,e_end,r_time_2)
+
+      logging.debug('Scheduler queue:\n%s',s.queue)
+      logging.info('Start scheduler at %s',time.strftime('%H:%M:%S'))
+      s.run()
+      logging.info('<><><> Completed scheduled events for this time interval. <><><>')
+
     else:
-        logging.info('No switching events in this time interval.')
+      logging.info('<><> No calendar events in this time interval. <><>')
   
 
 if __name__ == '__main__':
