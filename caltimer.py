@@ -44,7 +44,7 @@ from rpi_rf import RFDevice
 logging.basicConfig(stream=sys.stderr, format='%(asctime)s - %(module)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 
-def rc_switch(switch,onoff,stime):
+def rf_switch(switch,onoff,stime):
     if onoff:
       sendcode=config[switch]['oncode']
     else:
@@ -54,7 +54,7 @@ def rc_switch(switch,onoff,stime):
         argument=([config['DEFAULT']['rf433'],sendcode,
         config[switch]['protocol'],config[switch]['pulselength']],));
 
-def rc_comag(switch,onoff,stime):
+def rf_comag(switch,onoff,stime):
     # Comag code calculation:
     # switch 0 = binary "01"
     # switch 1 = binary "00"
@@ -79,8 +79,52 @@ def rc_comag(switch,onoff,stime):
       if c == "0":
         sendcode = sendcode | 1
     logging.debug('*** Comag sendcode = %s','{:08b}'.format(sendcode))   
-    logging.info('<<< Schedule to send RC code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
+    logging.info('<<< Schedule to send RF code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
     s.enterabs(stime,1,rfdevice.tx_code,argument=(sendcode, 1, 350));
+
+def rf_zap(switch,onoff,stime):
+    # ZAP/REV code calculation:
+    # tristate
+    #   0 = binary "00"
+    #   1 = binary "11"
+    #   F = binary "01"
+    # ON  = tri 01 = binary "0011"
+    # OFF = tri 10 = binary "1100"
+    #
+    # Example:
+    # ZAP-Code   Channel (F=open)  | Key 5..1          | On=01 Off=10          
+    # tri-state  0   0   F   F   F | 1   F   F   0   0 | 0   1
+    # binary     00  00  01  01  01| 11  01  01  00  00| 00  11 = 000001010111010100000011
+
+    # The ZAP switch config provides:
+    # 'channel'  : tri-state
+    # 'zap_base' : tri-state base for the key part
+    # 'key'      : decimal number of the receiver
+
+    # Create binary code
+    sendcode = 0
+    for c in config[switch]['channel']:
+      sendcode = sendcode << 2
+      if c == '1':
+        sendcode = sendcode | 3
+      elif c == 'F':
+        sendcode = sendcode | 1
+    key_code = list(config[switch]['zap_base'])
+    key_code [5-int(config[switch]['key'])] = "1"
+    for c in key_code:
+      sendcode = sendcode << 2
+      if c[0] == '1':
+        sendcode = sendcode | 3
+      elif c[0] == 'F':
+        sendcode = sendcode | 1
+    sendcode = sendcode << 4
+    if onoff:
+      sendcode = sendcode | 3
+    else:
+      sendcode = sendcode | 12
+    logging.info('*** ZAP sendcode = %s','{:08b}'.format(sendcode))
+    logging.info('<<< Schedule to send RF code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)));
+    s.enterabs(stime,1,rfdevice.tx_code,argument=(sendcode, 1, 188));
 
 def gpio_switch(switch,onoff,stime):
 # Set the pin to output (just to be sure...)
@@ -117,8 +161,9 @@ def dummy_switch(switch,onoff,stime):
 # Switch command options
 # usage: switch_type[type]()
 switch_type = {
-  'rc'    : rc_switch,
-  'comag' : rc_comag,
+  'rf'    : rf_switch,
+  'comag' : rf_comag,
+  'zap'   : rf_zap,
   'gpio'  : gpio_switch,
   'pulse' : gpio_pulse,
   'dummy' : dummy_switch,
