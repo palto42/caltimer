@@ -41,7 +41,7 @@ import RPi.GPIO as GPIO
 from rpi_rf import RFDevice
 
 # set initial logging to stderr, level INFO
-logging.basicConfig(stream=sys.stderr, format='%(asctime)s - %(module)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(stream=sys.stderr, format='%(asctime)s - %(levelname)s - %(module)s - %(message)s', level=logging.INFO)
 
 
 def rf_switch(switch,onoff,stime):
@@ -122,7 +122,7 @@ def rf_zap(switch,onoff,stime):
       sendcode = sendcode | 3
     else:
       sendcode = sendcode | 12
-    logging.info('*** ZAP sendcode = %s','{:08b}'.format(sendcode))
+    logging.debug('*** ZAP sendcode = %s','{:08b}'.format(sendcode))
     logging.info('<<< Schedule to send RF code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)));
     s.enterabs(stime,1,rfdevice.tx_code,argument=(sendcode, 1, 188));
 
@@ -222,7 +222,7 @@ def main():
     for handler in logging.root.handlers[:]:
       logging.root.removeHandler(handler)
     # Reconfigure logging again, this time with a file.
-    logging.basicConfig(filename = config['LOGGING']['logfile'], level=logging.INFO, format='%(asctime)s caltimer.py: %(levelname)s : %(message)s')
+    logging.basicConfig(filename = config['LOGGING']['logfile'], level=logging.INFO, format='%(asctime)s - %(levelname)s - %(module)s - %(message)s')
   except:
     if log_exists:
       temp_log = config['LOGGING']['logfile'][:-4]+time.strftime("_%y-%m-%d_%H-%M")+".log"
@@ -297,24 +297,27 @@ def main():
     r_time_1 = 0
     r_time_2 = 0
     
-    logging.info('%s events found for defined period.',len(results))
+    logging.debug('%s events found for defined period.',len(results))
     if len(results)>0:
       # calculate sunrise and sunset
       ro = SunriseSunset(datetime.now(), latitude=float(config['CALENDAR']['latitude']),
           longitude=float(config['CALENDAR']['longitude']), localOffset=float(config['CALENDAR']['local_offset']))
       rise_time, set_time = ro.calculate()
-      logging.info('Sunrise %s, sunset %s',rise_time, set_time)
+      logging.debug('Sunrise %s, sunset %s',rise_time, set_time)
 
       # schedule events
-      logging.info('Define scheduler')
+      logging.debug('Define scheduler')
       global s
       s = sched.scheduler(time.time, time.sleep)
       for event in results:
         event.load()
         e = event.instance.vevent
-        if not e.location.value in config:
-          logging.error ('>>> Event "%s" at %s has an undefined RC-switch "%s", skipping this event.',
+        if not config.has_section(e.location.value):
+          logging.error ('>>> Event "%s" at %s has an undefined RF-switch "%s", skipping this event.',
             e.summary.value, e.dtstart.value.strftime("%H:%M"), e.location.value)
+        elif not config[e.location.value]['type'] in switch_type:
+          logging.error ('>>> RF-switch "%s" uses undefined type "%s" , check ini file. Skipping this event.',
+            e.location.value, config[e.location.value]['type'])
         else:
           e_start = e.dtstart.value.timestamp()
           e_end = e.dtend.value.timestamp()
@@ -328,11 +331,11 @@ def main():
             try:
               description = e.description.value
             except:
-              logging.info('No description for this event')
+              logging.debug('No description for this event')
               description = '[DEFAULT]' # define empyt description to clear previous
             try:
               event_options.read_string(description)
-              logging.info('Description: %s',description)
+              logging.debug('Description: %s',description)
             except:
               logging.warning('Description incorrect for this event, treating as empty (no options)')
 
@@ -391,13 +394,13 @@ def main():
                   except:
                     logging.error('Sunset end offset format is incorrect! Format is "end_offset : 999"')
             if s_start:
-                logging.info('Switch on %s at %s %+.1f min',e.location.value,datetime.fromtimestamp(e_start).strftime('%H:%M:%S'),r_time_1/60)
+                logging.debug('Switch on %s at %s %+.1f min',e.location.value,datetime.fromtimestamp(e_start).strftime('%H:%M:%S'),r_time_1/60)
                 try:
                   switch_type[config[e.location.value]['type']](e.location.value,True,e_start+r_time_1)
                 except:
                   logging.critical('Error: %s at %s + %s',e.summary.value,e_start,r_time_1,'!')
             if s_end:
-                logging.info('Switch off %s at %s %+.1f min',e.location.value, datetime.fromtimestamp(e_end).strftime('%H:%M:%S'),r_time_2/60)
+                logging.debug('Switch off %s at %s %+.1f min',e.location.value, datetime.fromtimestamp(e_end).strftime('%H:%M:%S'),r_time_2/60)
                 try:
                   switch_type[config[e.location.value]['type']](e.location.value,False,e_end+r_time_2)
                 except:
