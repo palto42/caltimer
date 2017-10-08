@@ -49,7 +49,8 @@ def rf_switch(switch,onoff,stime):
       sendcode=config[switch]['oncode']
     else:
       sendcode=config[switch]['offcode']
-    logging.info('<<< rf_switch schedule to send RF code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
+    logging.info('<<< rf_switch schedule to send RF code %s at time %s via %s',
+        sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)),config[switch]['rf_code'])
     if config[switch]['rf_code'] == "rf433":
       s.enterabs(stime,1,subprocess.call, argument=([config['DEFAULT']['rf433'],sendcode, 
           config[switch]['protocol'], config[switch]['pulselength']],));
@@ -84,7 +85,8 @@ def rf_comag(switch,onoff,stime):
       if c == "0":
         sendcode = sendcode | 1
     logging.debug('*** Comag sendcode = %s','{:08b}'.format(sendcode))   
-    logging.info('<<< rf_comag schedule to send RF code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
+    logging.info('<<< rf_comag schedule to send RF code %s at time %s via %s',
+sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)),config[switch]['rf_code']);
     if config[switch]['rf_code'] == "rf433":
       s.enterabs(stime,1,subprocess.call,
         argument=([config['DEFAULT']['rf433'],str(sendcode),"1","350"],));
@@ -134,7 +136,8 @@ def rf_zap(switch,onoff,stime):
     else:
       sendcode = sendcode | 12
     logging.debug('*** ZAP sendcode = %s','{:08b}'.format(sendcode))
-    logging.info('<<< rf_zap schedule to send RF code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)));
+    logging.info('<<< rf_zap schedule to send RF code %s at time %s via %s',
+        sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)),config[switch]['rf_code']);
     if config[switch]['rf_code'] == "rf433":
       s.enterabs(stime,1,subprocess.call,
         argument=([config['DEFAULT']['rf433'],str(sendcode),"1","188"],));
@@ -352,7 +355,6 @@ def main():
               e.summary.value,e_start_dt.strftime('%Y-%m-%d %H:%M:%S'),e_end_dt.strftime('%Y-%m-%d %H:%M:%S'), e.rrule.value)            
 
           if s_start or s_end: # process event only if start or end is in current interval
-#            logging.info('>>> Schedule event: %s starting at %s <<<',e.summary.value,e.dtstart.value.strftime("%H:%M"))
             logging.info('>>> Schedule event: %s starting at %s (Frequency: %s)<<<',e.summary.value,e_start_dt.strftime("%H:%M"),e.rrule.value)
             event_options = configparser.ConfigParser() # clear event options from previous event
             try:
