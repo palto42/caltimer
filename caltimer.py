@@ -49,10 +49,15 @@ def rf_switch(switch,onoff,stime):
       sendcode=config[switch]['oncode']
     else:
       sendcode=config[switch]['offcode']
-    logging.info('<<< Schedule to send RC code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
-    s.enterabs(stime,1,subprocess.call,
-        argument=([config['DEFAULT']['rf433'],sendcode,
-        config[switch]['protocol'],config[switch]['pulselength']],));
+    logging.info('<<< rf_switch schedule to send RF code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
+    if config[switch]['rf_code'] == "rf433":
+      s.enterabs(stime,1,subprocess.call, argument=([config['DEFAULT']['rf433'],sendcode, 
+          config[switch]['protocol'], config[switch]['pulselength']],));
+    elif config[switch]['rf_code'] == "rpi-rf":
+      s.enterabs(stime,1,rfdevice.tx_code, argument=(int(sendcode), 
+          int(config[switch]['protocol']), int(config[switch]['pulselength'])));
+    else:
+      logging.error('rf_switch undefined rf_code for switch %s, check ini file!',switch)
 
 def rf_comag(switch,onoff,stime):
     # Comag code calculation:
@@ -79,8 +84,14 @@ def rf_comag(switch,onoff,stime):
       if c == "0":
         sendcode = sendcode | 1
     logging.debug('*** Comag sendcode = %s','{:08b}'.format(sendcode))   
-    logging.info('<<< Schedule to send RF code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
-    s.enterabs(stime,1,rfdevice.tx_code,argument=(sendcode, 1, 350));
+    logging.info('<<< rf_comag schedule to send RF code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
+    if config[switch]['rf_code'] == "rf433":
+      s.enterabs(stime,1,subprocess.call,
+        argument=([config['DEFAULT']['rf433'],str(sendcode),"1","350"],));
+    elif config[switch]['rf_code'] == "rpi-rf":
+      s.enterabs(stime,1,rfdevice.tx_code,argument=(int(sendcode), 1, 350));
+    else:
+      logging.error('rf_comag undefined rf_code for switch %s, check ini file!',switch)
 
 def rf_zap(switch,onoff,stime):
     # ZAP/REV code calculation:
@@ -123,8 +134,14 @@ def rf_zap(switch,onoff,stime):
     else:
       sendcode = sendcode | 12
     logging.debug('*** ZAP sendcode = %s','{:08b}'.format(sendcode))
-    logging.info('<<< Schedule to send RF code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)));
-    s.enterabs(stime,1,rfdevice.tx_code,argument=(sendcode, 1, 188));
+    logging.info('<<< rf_zap schedule to send RF code %s at time %s',sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)));
+    if config[switch]['rf_code'] == "rf433":
+      s.enterabs(stime,1,subprocess.call,
+        argument=([config['DEFAULT']['rf433'],str(sendcode),"1","188"],));
+    elif config[switch]['rf_code'] == "rpi-rf":
+      s.enterabs(stime,1,rfdevice.tx_code,argument=(sendcode, 1, 188));
+    else:
+      logging.error('rf_zap undefined rf_code for switch %s, check ini file!',switch)
 
 def gpio_switch(switch,onoff,stime):
 # Set the pin to output (just to be sure...)
@@ -288,6 +305,8 @@ def main():
     dt = datetime.today()
     dt = dt + timedelta(minutes = interval - dt.minute % interval, seconds = -(dt.second % 60), microseconds = -(dt.microsecond % 1000000))
     dt_end = dt+timedelta(minutes=interval)
+    dt_ts = dt.timestamp()
+    dt_end_ts = dt_end.timestamp()
 
     logging.info("Events between: %s and %s",dt,dt_end)
 
@@ -319,14 +338,22 @@ def main():
           logging.error ('>>> RF-switch "%s" uses undefined type "%s" , check ini file. Skipping this event.',
             e.location.value, config[e.location.value]['type'])
         else:
-          e_start = e.dtstart.value.timestamp()
-          e_end = e.dtend.value.timestamp()
+##################################################################################################################
+          # Calculate event start time for current date (required for recurring events)
+          e_start_dt = datetime.combine(date.today(),e.dtstart.value.time())
+          e_start = e_start_dt.timestamp()
+          # Calculate event end time for current date (required for recurring events)
+          e_end_dt = datetime.combine(date.today(),e.dtend.value.time())
+          e_end = e_end_dt.timestamp()
           # check if start/stop events are in current time interval
-          s_start = e_start >= dt.timestamp() and e_start < dt_end.timestamp()
-          s_end = e_end >= dt.timestamp() and e_end <= dt_end.timestamp()
+          s_start = e_start >= dt_ts and e_start < dt_end_ts
+          s_end = e_end >= dt_ts and e_end <= dt_end_ts
+          logging.debug('Event "%s" start: %s end: %s RRule: %s',
+              e.summary.value,e_start_dt.strftime('%Y-%m-%d %H:%M:%S'),e_end_dt.strftime('%Y-%m-%d %H:%M:%S'), e.rrule.value)            
 
           if s_start or s_end: # process event only if start or end is in current interval
-            logging.info('>>> Schedule event: %s starting at %s <<<',e.summary.value,e.dtstart.value.strftime("%H:%M"))
+#            logging.info('>>> Schedule event: %s starting at %s <<<',e.summary.value,e.dtstart.value.strftime("%H:%M"))
+            logging.info('>>> Schedule event: %s starting at %s (Frequency: %s)<<<',e.summary.value,e_start_dt.strftime("%H:%M"),e.rrule.value)
             event_options = configparser.ConfigParser() # clear event options from previous event
             try:
               description = e.description.value
@@ -394,20 +421,20 @@ def main():
                   except:
                     logging.error('Sunset end offset format is incorrect! Format is "end_offset : 999"')
             if s_start:
-                logging.debug('Switch on %s at %s %+.1f min',e.location.value,datetime.fromtimestamp(e_start).strftime('%H:%M:%S'),r_time_1/60)
+                logging.debug('Switch on %s at %s %+.1f min',e.location.value,e_start_dt.strftime('%Y-%m-%d %H:%M:%S'),r_time_1/60)
                 try:
                   switch_type[config[e.location.value]['type']](e.location.value,True,e_start+r_time_1)
                 except:
                   logging.critical('Error: %s at %s + %s',e.summary.value,e_start,r_time_1,'!')
             if s_end:
-                logging.debug('Switch off %s at %s %+.1f min',e.location.value, datetime.fromtimestamp(e_end).strftime('%H:%M:%S'),r_time_2/60)
+                logging.debug('Switch off %s at %s %+.1f min',e.location.value, e_end_dt.strftime('%Y-%m-%d %H:%M:%S'),r_time_2/60)
                 try:
                   switch_type[config[e.location.value]['type']](e.location.value,False,e_end+r_time_2)
                 except:
                   logging.critical('Error for %s at %s+ %s',e.summary.value,e_end,r_time_2)
 
       logging.debug('Scheduler queue:\n%s',s.queue)
-      logging.info('Start scheduler at %s',time.strftime('%H:%M:%S'))
+      logging.info('Start scheduler at %s',time.strftime('%Y-%m-%d %H:%M:%S'))
       s.run()
       logging.info('<><><> Completed scheduled events for this time interval. <><><>')
 
