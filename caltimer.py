@@ -142,7 +142,7 @@ def rf_zap(switch,onoff,stime):
       s.enterabs(stime,1,subprocess.call,
         argument=([config['DEFAULT']['rf433'],str(sendcode),"1","188"],));
     elif config[switch]['rf_code'] == "rpi-rf":
-      s.enterabs(stime,1,rfdevice.tx_code,argument=(sendcode, 1, 188));
+      s.enterabs(stime,1,rfdevice.tx_code,argument=(sendcode, 1, 187));
     else:
       logging.error('rf_zap undefined rf_code for switch %s, check ini file!',switch)
 
