@@ -177,7 +177,7 @@ def gpio_pulse(switch,onoff,stime):
     s.enterabs(stime+pulsetime,1,GPIO.output,argument=(int(config[switch]['pin']),0));
 
 def dummy_switch(switch,onoff,stime):
-    s.enterabs(stime,1,logging.warning,argument=('Dummy: %s',onoff));
+    s.enterabs(stime,1,logging.warning,argument=('Dummy event action: %s',onoff));
 
 # Switch command options
 # usage: switch_type[type]()
@@ -348,6 +348,10 @@ def main():
       ro = SunriseSunset(datetime.now(), latitude=float(config['CALENDAR']['latitude']),
           longitude=float(config['CALENDAR']['longitude']), localOffset=float(config['CALENDAR']['local_offset']))
       rise_time, set_time = ro.calculate()
+##### TEST ####
+#      rise_time = datetime.strptime("12/10/17 21:00", "%d/%m/%y %H:%M")
+#      set_time = datetime.strptime("12/10/17 21:30", "%d/%m/%y %H:%M")
+###############
       logging.debug('Sunrise %s, sunset %s',rise_time, set_time)
 
       # schedule events
@@ -364,7 +368,6 @@ def main():
           logging.error ('>>> RF-switch "%s" uses undefined type "%s" , check ini file. Skipping this event.',
             e.location.value, config[e.location.value]['type'])
         else:
-##################################################################################################################
           # Calculate event start time for current date (required for recurring events)
           e_start_dt = datetime.combine(date.today(),e.dtstart.value.time())
           e_start = e_start_dt.timestamp()
@@ -372,13 +375,17 @@ def main():
           e_end_dt = datetime.combine(date.today(),e.dtend.value.time())
           e_end = e_end_dt.timestamp()
           # check if start/stop events are in current time interval
-          s_start = e_start >= dt_ts and e_start < dt_end_ts
-          s_end = e_end >= dt_ts and e_end <= dt_end_ts
+          s_start = ((e_start >= dt_ts) and (e_start < dt_end_ts))
+          s_end = (e_end <= dt_end_ts)
+          try:
+            rrule = e.rrule.value
+          except:
+            rrule = "-"
           logging.debug('Event "%s" start: %s end: %s RRule: %s',
-              e.summary.value,e_start_dt.strftime('%Y-%m-%d %H:%M:%S'),e_end_dt.strftime('%Y-%m-%d %H:%M:%S'), e.rrule.value)            
+              e.summary.value,e_start_dt.strftime('%Y-%m-%d %H:%M:%S'),e_end_dt.strftime('%Y-%m-%d %H:%M:%S'), rrule)            
 
           if s_start or s_end: # process event only if start or end is in current interval
-            logging.info('>>> Schedule event: %s starting at %s (Frequency: %s)<<<',e.summary.value,e_start_dt.strftime("%H:%M"),e.rrule.value)
+            logging.info('>>> Schedule event: %s starting at %s (Frequency: %s)<<<',e.summary.value,e_start_dt.strftime("%H:%M"),rrule)
             event_options = configparser.ConfigParser() # clear event options from previous event
             try:
               description = e.description.value
@@ -420,11 +427,28 @@ def main():
                 except:
                   logging.error('Random end is incorrect! Format is "end : 999"')
             if event_options.has_section('sun'):
+              # first check all possible start options
               if event_options.has_option('sun','start'):
                 if event_options['sun']['start'] == "rise":
                   e_start=rise_time.timestamp()
                 elif event_options['sun']['start'] == "set":
                   e_start=set_time.timestamp()
+                elif event_options['sun']['start'] == "before rise":
+                  if e_start > rise_time.timestamp(): # start time is after sunrise = skip event start
+                    s_start = False
+                    logging.debug('Defined start is after sun rise, but should be before -> skipping event')
+                elif event_options['sun']['start'] == "after rise":
+                  if e_start < rise_time.timestamp(): # start time is before sunrise, set start = sun rise
+                    e_start = rise_time.timestamp()
+                    logging.debug('Defined start time is before sun rise, but should be after -> setting start time = sun rise')
+                elif event_options['sun']['start'] == "before set":
+                  if e_start > set_time.timestamp(): # start time is after sun set, skip event start
+                    s_start = False
+                    logging.debug('Defined start is after sun set, but should be before -> skipping event')
+                elif event_options['sun']['start'] == "after set":
+                  if e_start < set_time.timestamp(): # start time is before sun set, set start = sun set
+                    e_start = set_time.timestamp()
+                    logging.debug('Defined start time is before sun set, but should be after -> setting start time = sun set')
                 else:
                   logging.error('Sunrise start time option is incorrect, valid options are "rise" or "set"')
                 if event_options.has_option('sun','start_offset'):
@@ -432,12 +456,28 @@ def main():
                     e_start=e_start+(float(event_options['sun']['start_offset'])*60) # sunrise + offset
                   except:
                     logging.error('Sunrise start offset format is incorrect! Format is "start_offset : 999"')
-            if event_options.has_section('sun'):
+              # now check all the end options
               if event_options.has_option('sun','end'):
                 if event_options['sun']['end'] == "rise":
                   e_end=rise_time.timestamp()
                 elif event_options['sun']['end'] == "set":
                   e_end=set_time.timestamp()
+                elif event_options['sun']['end'] == "before rise":
+                  if e_end > rise_time.timestamp(): # end time is after sunrise, set end = sun rise
+                    e_end = rise_time.timestamp()
+                    logging.debug('Defined end time is after sun rise, but should be before -> setting end time = sun rise')
+                elif event_options['sun']['end'] == "after rise":
+                  if e_end < rise_time.timestamp(): # end time is before sunrise, set end = sun rise
+                    e_end = rise_time.timestamp()
+                    logging.debug('Defined end time is before sun rise, but should be after -> setting end time = sun rise')
+                elif event_options['sun']['end'] == "before set":
+                  if e_end > set_time.timestamp(): # end time is after sun set, set end  = sun set
+                    e_end = set_time.timestamp()
+                    logging.debug('Defined end time is after sun set, but should be before -> setting end time = sun set')
+                elif event_options['sun']['end'] == "after set":
+                  if e_end < set_time.timestamp(): # end time is before sun set, set end = sun set
+                    e_end = set_time.timestamp()
+                    logging.debug('Defined end time is before sun set, but should be after -> setting end time = sun set')
                 else:
                   logging.error('Sunrise end time option is incorrect, valid options are "rise" or "set"')
                 if event_options.has_option('sun','end_offset'):
@@ -445,19 +485,29 @@ def main():
                     e_end=e_end+(float(event_options['sun']['end_offset'])*60) # sunset + offset  
                   except:
                     logging.error('Sunset end offset format is incorrect! Format is "end_offset : 999"')
+                
+            # check if calculated start time is after the calculated end time => skip start event (keep end to ensure that "off" is sent)
+            if e_start+r_time_1 >= e_end+r_time_2:
+               s_start = False
+               logging.debug('Start time is after end time, skipping start of event.')
+            # re-check end time
+            s_end = (e_end <= dt_end_ts)
             if s_start:
-                logging.debug('Switch on %s at %s %+.1f min',e.location.value,e_start_dt.strftime('%Y-%m-%d %H:%M:%S'),r_time_1/60)
+                logging.debug('Switch on %s at %s %+.1f min',e.location.value, datetime.fromtimestamp(e_start+r_time_1).strftime('%Y-%m-%d %H:%M:%S'),r_time_1/60)
                 try:
                   switch_type[config[e.location.value]['type']](e.location.value,True,e_start+r_time_1)
                 except:
                   logging.critical('Error: %s at %s + %s',e.summary.value,e_start,r_time_1,'!')
             if s_end:
-                logging.debug('Switch off %s at %s %+.1f min',e.location.value, e_end_dt.strftime('%Y-%m-%d %H:%M:%S'),r_time_2/60)
+                logging.debug('Switch off %s at %s %+.1f min',e.location.value, datetime.fromtimestamp(e_end+r_time_2).strftime('%Y-%m-%d %H:%M:%S'),r_time_2/60)
                 try:
                   switch_type[config[e.location.value]['type']](e.location.value,False,e_end+r_time_2)
                 except:
                   logging.critical('Error for %s at %s+ %s',e.summary.value,e_end,r_time_2)
-
+            else:
+               logging.debug('End time is after current scheduler interval, skipping end of event.')
+          else:
+            logging.debug('Start and end time are not in current interval, skipping...')
       logging.debug('Scheduler queue:\n%s',s.queue)
       logging.info('Start scheduler at %s',time.strftime('%Y-%m-%d %H:%M:%S'))
       s.run()
