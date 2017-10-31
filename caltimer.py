@@ -206,13 +206,12 @@ loglevel = {
 def main():
 
   # Comamnd line arguments
-  # -i ini-file path/name
-  # -d debug level
   parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
   parser.add_argument('-i', '--init', help='specify path/filename of ini file to read from',
       default='/etc/caltimer/caltimer.ini')
   parser.add_argument('-l', '--log', help='set log level (overwrites ini file)\n'
       '  Supported levels are: CRITICAL, ERROR, WARNING, INFO, DEBUG')
+  parser.add_argument('-t', '--time-interval', help='scheduler time interval in minutes')
   args = parser.parse_args()
 
   # Read ini file for RC switch definition
@@ -277,7 +276,7 @@ def main():
     # log level set as command line parameter
     try:
       logging.info('Set loglevel: %s',args.log)
-      logging.getLogger().setLevel(loglevel[args.log])
+      logging.getLogger().setLevel(loglevel[args.log.upper()])
     except:
       print ('ERROR: Incorrect loging level specified, using log evel "ERROR"')
       logging.getLogger().setLevel(logging.ERROR)
@@ -297,8 +296,17 @@ def main():
   except:
     logging.error('Missing or incorrect ini file, please check /etc/caltimer/caltimer.ini')
     return
+
   # Scheduler intervall in Minuten
-  interval = int(config['CALENDAR']['interval'])
+  try:
+    if args.time_interval is not None:
+      interval = int(args.time_interval)
+    else:
+      interval = int(config['CALENDAR']['interval'])
+  except:
+    logging.error('Defined scheduler time interval is not an integer number!')
+    return
+
   # Maximum pulse length for GPIO pulses
   # max_pulse = float(config['DEFAULT']['max_pulse'])
 
@@ -352,7 +360,7 @@ def main():
 #      rise_time = datetime.strptime("12/10/17 21:00", "%d/%m/%y %H:%M")
 #      set_time = datetime.strptime("12/10/17 21:30", "%d/%m/%y %H:%M")
 ###############
-      logging.debug('Sunrise %s, sunset %s',rise_time, set_time)
+      logging.info('Sunrise %s, sunset %s',rise_time, set_time)
 
       # schedule events
       logging.debug('Define scheduler')
@@ -491,7 +499,7 @@ def main():
                s_start = False
                logging.debug('Start time is after end time, skipping start of event.')
             # re-check end time
-            s_end = (e_end <= dt_end_ts)
+            ## not required (causes issues!) s_end = (e_end <= dt_end_ts)
             if s_start:
                 logging.debug('Switch on %s at %s %+.1f min',e.location.value, datetime.fromtimestamp(e_start+r_time_1).strftime('%Y-%m-%d %H:%M:%S'),r_time_1/60)
                 try:
@@ -505,7 +513,8 @@ def main():
                 except:
                   logging.critical('Error for %s at %s+ %s',e.summary.value,e_end,r_time_2)
             else:
-               logging.debug('End time is after current scheduler interval, skipping end of event.')
+               logging.debug('End time %s is after current scheduler interval, skipping end of event.',
+                 datetime.fromtimestamp(e_end).strftime('%Y-%m-%d %H:%M:%S'))
           else:
             logging.debug('Start and end time are not in current interval, skipping...')
       logging.debug('Scheduler queue:\n%s',s.queue)
