@@ -39,6 +39,7 @@ from caldav.elements import dav, cdav
 from sunrise_sunset import SunriseSunset
 import RPi.GPIO as GPIO
 from rpi_rf import RFDevice
+import argparse
 
 # set initial logging to stderr, level INFO
 logging.basicConfig(stream=sys.stderr, format='%(asctime)s - %(levelname)s - %(module)s - %(message)s', level=logging.INFO)
@@ -86,7 +87,7 @@ def rf_comag(switch,onoff,stime):
         sendcode = sendcode | 1
     logging.debug('*** Comag sendcode = %s','{:08b}'.format(sendcode))   
     logging.info('<<< rf_comag schedule to send RF code %s at time %s via %s',
-sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)),config[switch]['rf_code']);
+        sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)),config[switch]['rf_code']);
     if config[switch]['rf_code'] == "rf433":
       s.enterabs(stime,1,subprocess.call,
         argument=([config['DEFAULT']['rf433'],str(sendcode),"1","350"],));
@@ -204,13 +205,26 @@ loglevel = {
 #############################################################
 def main():
 
+  # Comamnd line arguments
+  # -i ini-file path/name
+  # -d debug level
+  parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
+  parser.add_argument('-i', '--init', help='specify path/filename of ini file to read from',
+      default='/etc/caltimer/caltimer.ini')
+  parser.add_argument('-l', '--log', help='set log level (overwrites ini file)\n'
+      '  Supported levels are: CRITICAL, ERROR, WARNING, INFO, DEBUG')
+  args = parser.parse_args()
+
   # Read ini file for RC switch definition
   # keys: oncode, offcode, protocol, pulselength
   # example: config['switchname']['oncode']
   global config
   config = configparser.ConfigParser()
   config.sections()
-  config.read('/etc/caltimer/caltimer.ini')
+  config.read(args.init)
+  if len(config)<=1:
+      print ("ERROR: The specified ini file doesn't exit!")
+      return
 
   # Raspberry Pi GPIO settings
   GPIO.setmode(GPIO.BCM)
@@ -259,14 +273,23 @@ def main():
         logging.error('No write access for temp logfile, using sdterr for logging.') 
     else:
       logging.error('No (correct) filename defined, using sdterr for logging.')
-  # set logging level if defined in caltimer.ini
-  logging.info('-----------------------------------------------------------------')
-  try:
-    logging.info('Set loglevel: %s',config['LOGGING']['loglevel'])
-    logging.getLogger().setLevel(loglevel[config['LOGGING']['loglevel']])
-  except:
-    logging.error('No loglevel defined, using ERROR')
-    logging.getLogger().setLevel(logging.ERROR)
+  if args.log is not None:
+    # log level set as command line parameter
+    try:
+      logging.info('Set loglevel: %s',args.log)
+      logging.getLogger().setLevel(loglevel[args.log])
+    except:
+      print ('ERROR: Incorrect loging level specified, using log evel "ERROR"')
+      logging.getLogger().setLevel(logging.ERROR)
+  else:
+    # set logging level if defined in caltimer.ini
+    logging.info('-----------------------------------------------------------------')
+    try:
+      logging.info('Set loglevel: %s',config['LOGGING']['loglevel'])
+      logging.getLogger().setLevel(loglevel[config['LOGGING']['loglevel']])
+    except:
+      logging.error('No loglevel defined, using ERROR')
+      logging.getLogger().setLevel(logging.ERROR)
  
   # Caldav url
   try:
