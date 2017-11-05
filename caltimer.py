@@ -425,10 +425,11 @@ def main():
 
     if len(results) > 0:
         # calculate sunrise and sunset
+        # use caluclated "tzoffset" instead on "local_offset" from ini file
         ro = SunriseSunset(
             datetime.now(), latitude=float(config['CALENDAR']['latitude']),
             longitude=float(config['CALENDAR']['longitude']),
-            localOffset=float(config['CALENDAR']['local_offset']))
+            localOffset=tzoffset)
         rise_time, set_time = ro.calculate()
         # set sun times manually for test purposes
         if args.sun_rise is not None:
