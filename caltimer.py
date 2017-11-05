@@ -26,12 +26,6 @@
 # 2017-11-05                                            #
 # #######################################################
 
-import sys
-sys.path.append(r'/home/matthias/pysrc')
-import pydevd
-pydevd.settrace('cubitus.fritz.box') # replace IP with address
-                                     # of Eclipse host machine
-
 import logging
 import sys
 import configparser
