@@ -236,7 +236,7 @@ loglevel = {
 }
 
 
-def configure_logging():
+def configure_logging(log_arg):
     # check if logfile is defined and can be opened for read
     try:
         logfile = open(config['LOGGING']['logfile'], 'r')
@@ -284,10 +284,10 @@ def configure_logging():
             logging.error('No (correct) filename defined, '
                           'using sdterr for logging.')
     # log level set as command line parameter?
-    if args.log is not None:
+    if log_arg is not None:
         try:
-            logging.info('Set loglevel: %s', args.log)
-            logging.getLogger().setLevel(loglevel[args.log.upper()])
+            logging.info('Set loglevel: %s', log_arg)
+            logging.getLogger().setLevel(loglevel[log_arg.upper()])
         except:
             print ('ERROR: Incorrect loging level specified, '
                    'using log evel "ERROR"')
@@ -348,7 +348,7 @@ def main():
     tzoffset = datetime.today().hour-datetime.utcnow().hour
 
     # set logfile destination and log level
-    configure_logging()
+    configure_logging(args.log)
 
     # Set Caldav url
     try:
@@ -368,9 +368,6 @@ def main():
         logging.error(
             'Defined scheduler time interval is not an integer number!')
         return
-
-    # Maximum pulse length for GPIO pulses
-    max_pulse = float(config['DEFAULT']['max_pulse'])
 
     # event options
     event_options = configparser.ConfigParser()
