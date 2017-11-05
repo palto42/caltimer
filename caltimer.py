@@ -23,7 +23,7 @@
 #   end_offset : offset in minutes                      #
 #                                                       #
 # Matthias Homann                                       #
-# 2017-11-04                                            #
+# 2017-11-05                                            #
 # #######################################################
 
 
@@ -215,28 +215,16 @@ def dummy_switch(switch, onoff, stime):
     s.enterabs(stime, 1, logging.warning,
                argument=('Dummy event action: %s', onoff))
 
-# Switch command options
-# usage: switch_type[type]()
-switch_type = {
-  'rf':    rf_switch,
-  'comag': rf_comag,
-  'zap':   rf_zap,
-  'gpio':  gpio_switch,
-  'pulse': gpio_pulse,
-  'dummy': dummy_switch,
-  }
-
-loglevel = {
-  'CRITICAL': 50,
-  'ERROR':    40,
-  'WARNING':  30,
-  'INFO':     20,
-  'DEBUG':    10,
-  'NOTSET':    0
-}
-
 
 def configure_logging(log_arg):
+    loglevel = {
+        'CRITICAL': 50,
+        'ERROR':    40,
+        'WARNING':  30,
+        'INFO':     20,
+        'DEBUG':    10,
+        'NOTSET':    0
+    }
     # check if logfile is defined and can be opened for read
     try:
         logfile = open(config['LOGGING']['logfile'], 'r')
@@ -310,6 +298,17 @@ def configure_logging(log_arg):
 #############################################################
 def main():
 
+    # Switch command options
+    # usage: switch_type[type]()
+    switch_type = {
+        'rf':    rf_switch,
+        'comag': rf_comag,
+        'zap':   rf_zap,
+        'gpio':  gpio_switch,
+        'pulse': gpio_pulse,
+        'dummy': dummy_switch,
+        }
+
     # Comamnd line arguments
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawTextHelpFormatter)
@@ -322,6 +321,10 @@ def main():
                         'CRITICAL, ERROR, WARNING, INFO, DEBUG')
     parser.add_argument('-t', '--time-interval',
                         help='scheduler time interval in minutes')
+    parser.add_argument('-r', '--sun-rise',
+                        help='manually set the sunrise time as "06:00"')
+    parser.add_argument('-s', '--sun-set',
+                        help='manually set the sunset time as "21:00"')
     args = parser.parse_args()
 
     # Read ini file for RC switch definition
@@ -425,8 +428,14 @@ def main():
             localOffset=float(config['CALENDAR']['local_offset']))
         rise_time, set_time = ro.calculate()
         # set sun times manually for test purposes
-        #----- rise_time = datetime.strptime("12/10/17 21:00", "%d/%m/%y %H:%M")
-        #------ set_time = datetime.strptime("12/10/17 21:30", "%d/%m/%y %H:%M")
+        if args.sun_rise is not None:
+            rise_time = datetime.strptime(str(date.today())+" "+args.sun_rise,
+                                          "%Y-%m-%d %H:%M")
+        if args.sun_set is not None:
+            temp_time = str(date.today())+" "+args.sun_set
+            set_time = datetime.strptime(str(date.today())+" "+args.sun_set,
+                                         "%Y-%m-%d %H:%M")
+
         logging.info('Sunrise %s, sunset %s', rise_time, set_time)
 
         # schedule events
