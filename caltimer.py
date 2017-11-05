@@ -40,6 +40,7 @@ from sunrise_sunset import SunriseSunset
 import RPi.GPIO as GPIO
 from rpi_rf import RFDevice
 import argparse
+import requests
 
 # constant definitions
 pulse_comag = 350
@@ -219,7 +220,7 @@ def dummy_switch(switch, onoff, stime):
                argument=('Dummy event action: %s', onoff))
 
 
-def configure_logging(log_arg):
+def configure_logging(log_arg, update, file):
     loglevel = {
         'CRITICAL': 50,
         'ERROR':    40,
@@ -279,6 +280,9 @@ def configure_logging(log_arg):
         try:
             logging.info('Set loglevel: %s', log_arg)
             logging.getLogger().setLevel(loglevel[log_arg.upper()])
+            if update:
+                config.set('LOGGING','loglevel',log_arg.upper())
+                update_ini(file)
         except:
             print ('ERROR: Incorrect loging level specified, '
                    'using log evel "ERROR"')
@@ -294,6 +298,24 @@ def configure_logging(log_arg):
         except:
             logging.error('No loglevel defined, using ERROR')
             logging.getLogger().setLevel(logging.ERROR)
+
+
+def get_location(file,address):
+    response = requests.get('https://maps.googleapis.com/maps/api/geocode/json?address='+address)
+    resp_json_payload = response.json()
+    latitude = resp_json_payload['results'][0]['geometry']['location']['lat']
+    longitude = resp_json_payload['results'][0]['geometry']['location']['lng']
+    logging.info('Found coordinates for address %s: latitude=%s, longitude=%s', 
+                 address, latitude, longitude)
+    config.set('CALENDAR','latitude',str(latitude))
+    config.set('CALENDAR','longitude',str(longitude))
+    
+
+def update_ini(file):
+    logging.warning('Saving updates to ini file')
+    # Note: writing the ini file will remove all comments!
+    with open(file, 'w') as configfile:
+        config.write(configfile)
 
 
 #############################################################
@@ -312,6 +334,10 @@ def main():
         'dummy': dummy_switch,
         }
 
+    # Raspberry Pi GPIO settings
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)
+    
     # Comamnd line arguments
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawTextHelpFormatter)
@@ -328,6 +354,11 @@ def main():
                         help='manually set the sunrise time as "06:00"')
     parser.add_argument('-s', '--sun-set',
                         help='manually set the sunset time as "21:00"')
+    parser.add_argument('-a', '--address',
+                        help='Get coordinates from address')
+    parser.add_argument('-u', '--update',
+                        help='Update ini file (e.g. log level)',
+                        action='store_true')
     args = parser.parse_args()
 
     # Read ini file for RC switch definition
@@ -341,10 +372,6 @@ def main():
         print ("ERROR: The specified ini file doesn't exit!")
         return
 
-    # Raspberry Pi GPIO settings
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setwarnings(False)
-
     # Enable RF transmitter
     global rfdevice
     rfdevice = RFDevice(int(config['DEFAULT']['gpio']))
@@ -354,7 +381,14 @@ def main():
     tzoffset = datetime.today().hour-datetime.utcnow().hour
 
     # set logfile destination and log level
-    configure_logging(args.log)
+    configure_logging(args.log, args.update, args.init)
+
+    # get coordinates from address
+    if args.address is not None:
+        config.set('CALENDAR','location',args.address)
+        get_location(args.init, args.address)
+        if args.update:
+            update_ini(args.init)
 
     # Set Caldav url
     try:
@@ -368,6 +402,9 @@ def main():
     try:
         if args.time_interval is not None:
             interval = int(args.time_interval)
+            if args.update:
+                config.set('CALENDAR','interval',args.time_interval)
+                update_ini(args.init)
         else:
             interval = int(config['CALENDAR']['interval'])
     except:
@@ -424,6 +461,19 @@ def main():
     r_time_2 = 0
 
     if len(results) > 0:
+        # check if longitude/latitude is set in ini file
+        # otherwise use location to query them from google maps
+        if not (config.has_option('CALENDAR','latitude') and 
+                config.has_option('CALENDAR','longitude')):
+            if config.has_option('CALENDAR','location'):
+                logging.info('Get coordinates from location address')
+                get_location(args.init, config['CALENDAR']['location'])
+                if args.update:
+                    update_ini(args.init)
+            else:
+                logging.error('Coordinates and location not defined, exit')
+                return
+
         # calculate sunrise and sunset
         # use caluclated "tzoffset" instead on "local_offset" from ini file
         ro = SunriseSunset(
