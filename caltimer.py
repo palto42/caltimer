@@ -26,7 +26,6 @@
 # 2017-11-05                                            #
 # #######################################################
 
-
 import logging
 import sys
 import configparser
@@ -41,6 +40,10 @@ from sunrise_sunset import SunriseSunset
 import RPi.GPIO as GPIO
 from rpi_rf import RFDevice
 import argparse
+
+# constant definitions
+pulse_comag = 350
+pulse_zap = 187
 
 # set initial logging to stderr, level INFO
 logging.basicConfig(
@@ -105,10 +108,10 @@ def rf_comag(switch, onoff, stime):
     if config[switch]['rf_code'] == "rf433":
         s.enterabs(stime, 1, subprocess.call,
                    argument=([config['DEFAULT']['rf433'],
-                              str(sendcode), "1", "350"],))
+                              str(sendcode), "1", str(pulse_comag)],))
     elif config[switch]['rf_code'] == "rpi-rf":
         s.enterabs(stime, 1, rfdevice.tx_code,
-                   argument=(int(sendcode), 1, 350))
+                   argument=(int(sendcode), 1, pulse_comag))
     else:
         logging.error(
             'rf_comag undefined rf_code for switch %s, check ini file!',
@@ -165,9 +168,9 @@ def rf_zap(switch, onoff, stime):
         s.enterabs(
             stime, 1, subprocess.call,
             argument=([config['DEFAULT']['rf433'],
-                       str(sendcode), "1", "187"],))
+                       str(sendcode), "1", str(pulse_zap)],))
     elif config[switch]['rf_code'] == "rpi-rf":
-        s.enterabs(stime, 1, rfdevice.tx_code, argument=(sendcode, 1, 187))
+        s.enterabs(stime, 1, rfdevice.tx_code, argument=(sendcode, 1, pulse_zap))
     else:
         logging.error(
             'rf_zap undefined rf_code for switch %s, check ini file!', switch)
