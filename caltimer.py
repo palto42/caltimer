@@ -318,6 +318,41 @@ def update_ini(file):
         config.write(configfile)
 
 
+def get_sun(offset, m_rise, m_set):
+    # calculate sunrise and sunset times for specified location
+    ro = SunriseSunset(
+        datetime.now(), latitude=float(config['CALENDAR']['latitude']),
+        longitude=float(config['CALENDAR']['longitude']),
+        localOffset=offset)
+    rise_time, set_time = ro.calculate()
+    # overwrite sun times for test purposes
+    if m_rise is not None:
+        rise_time = datetime.strptime(str(date.today())+" "+m_rise,
+                                      "%Y-%m-%d %H:%M")
+    if m_set is not None:
+        temp_time = str(date.today())+" "+args.sun_set
+        set_time = datetime.strptime(str(date.today())+" "+m_set,
+                                     "%Y-%m-%d %H:%M")
+    logging.info('Sunrise %s, sunset %s', rise_time, set_time)
+    return rise_time, set_time
+
+def switch_defined(switch):
+    if not config.has_section(switch):
+        logging.error(
+            '>>> Event "%s" at %s has an undefined RF-switch "%s"'
+            ', skipping this event.',
+            e.summary.value, e.dtstart.value.strftime("%H:%M"),
+            e.location.value)
+        return False
+    elif not config[e.location.value]['type'] in switch_type:
+        logging.error(
+            '>>> RF-switch "%s" uses undefined type "%s" , '
+            'check ini file. Skipping this event.',
+            e.location.value, config[e.location.value]['type'])
+        return False
+    return True
+
+
 #############################################################
 # MAIN                                                      #
 #############################################################
@@ -474,24 +509,9 @@ def main():
                 logging.error('Coordinates and location not defined, exit')
                 return
 
-        # calculate sunrise and sunset
-        # use caluclated "tzoffset" instead on "local_offset" from ini file
-        ro = SunriseSunset(
-            datetime.now(), latitude=float(config['CALENDAR']['latitude']),
-            longitude=float(config['CALENDAR']['longitude']),
-            localOffset=tzoffset)
-        rise_time, set_time = ro.calculate()
-        # set sun times manually for test purposes
-        if args.sun_rise is not None:
-            rise_time = datetime.strptime(str(date.today())+" "+args.sun_rise,
-                                          "%Y-%m-%d %H:%M")
-        if args.sun_set is not None:
-            temp_time = str(date.today())+" "+args.sun_set
-            set_time = datetime.strptime(str(date.today())+" "+args.sun_set,
-                                         "%Y-%m-%d %H:%M")
-
-        logging.info('Sunrise %s, sunset %s', rise_time, set_time)
-
+        # get sunrise and sunset
+        rise_time, set_time = get_sun(tzoffset, args.sun_rise,args.sun_set)
+        
         # schedule events
         logging.debug('Define scheduler')
         global s
@@ -503,19 +523,7 @@ def main():
             schedule_end = False
             # check if the event has a known switch 
             # defined in the location field
-            if not config.has_section(e.location.value):
-                logging.error(
-                    '>>> Event "%s" at %s has an undefined RF-switch "%s"'
-                    ', skipping this event.',
-                    e.summary.value, e.dtstart.value.strftime("%H:%M"),
-                    e.location.value)
-            elif not config[e.location.value]['type'] in switch_type:
-                logging.error(
-                    '>>> RF-switch "%s" uses undefined type "%s" , '
-                    'check ini file. Skipping this event.',
-                    e.location.value, config[e.location.value]['type'])
-            # found known switch, get event start/stop times
-            else:
+            if switch_defined(e.location.value):
                 # Calculate event start/end time for current date
                 # (required for recurring events)
                 # TODO: possible issue if interval would span across midnight
