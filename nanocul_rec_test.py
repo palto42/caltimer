@@ -1,4 +1,4 @@
-#! /usr/bin/python3
+#!/usr/bin/python3
 import serial
 from time import sleep
 
@@ -29,4 +29,3 @@ while True:
     #print ('not blocked')
 
 ser.close()
-
