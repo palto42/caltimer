@@ -20,6 +20,8 @@ import time
 import RPi.GPIO as GPIO
 from rpi_rf import RFDevice
 
+GPIO.setwarnings(False)
+
 # constant definitions
 pulse_comag = 350
 pulse_zap = 187
@@ -257,7 +259,7 @@ def main():
         formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('-i', '--init',
                         help='specify path/filename of ini file to read from',
-                        default='/etc/caltimer/nanocul.ini')
+                        default='/etc/pyscript/nanocul.ini')
     parser.add_argument('-l', '--log',
                         help='set log level (overwrites ini file)\n'
                         '  Supported levels are: '
