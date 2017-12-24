@@ -23,7 +23,7 @@
 #   end_offset : offset in minutes                      #
 #                                                       #
 # Matthias Homann                                       #
-# 2017-11-05                                            #
+# 2017-12-24                                            #
 # #######################################################
 
 import logging
@@ -41,10 +41,13 @@ import RPi.GPIO as GPIO
 from rpi_rf import RFDevice
 import argparse
 import requests
+import serial
 
-# constant definitions
+# Default pulse length definitions
+# Can be overwritten from ini file settings
 pulse_comag = 350
 pulse_zap = 187
+kopp_time = '00100'
 
 # set initial logging to stderr, level INFO
 logging.basicConfig(
@@ -52,6 +55,9 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(module)s - %(message)s',
     level=logging.INFO)
 
+def send_ser (code):
+    x = ser.write(code.encode()+b'\n')
+    logging.debug('Serial send code = %s', code)
 
 def rf_switch(switch, onoff, stime):
     if onoff:
@@ -118,7 +124,6 @@ def rf_comag(switch, onoff, stime):
             'rf_comag undefined rf_code for switch %s, check ini file!',
             switch)
 
-
 def rf_zap(switch, onoff, stime):
     # ZAP/REV code calculation:_
     # tristate
@@ -175,6 +180,31 @@ def rf_zap(switch, onoff, stime):
     else:
         logging.error(
             'rf_zap undefined rf_code for switch %s, check ini file!', switch)
+
+
+def rf_kopp(switch, onoff, stime):
+    # Kopp code example
+    # 
+    # kt004B130300100N
+    # |||||||||||||||+-- Print output J/N
+    # ||||||||||+++++--- Key pressed in ms
+    # ||||++++++-------- Transmitter Code 1 + 2
+    # ||++-------------- Key code on/off
+    # ++---------------- kt = nanocul command for Kopp transmit
+
+    sendcode='kt'
+    if onoff:
+        if config.has_option(switch, 'key_on'):
+            sendcode += config[switch]['key_on']
+        else:
+            # calculate key_on from key_off by adding 0x10
+            sendcode += format(int(config[switch]['key_off'],base=16)+16,'X')
+    else:
+        sendcode += config[switch]['key_off']
+    sendcode += config[switch]['transmit_1'] + config[switch]['transmit_2'] + kopp_time + 'N'
+    s.enterabs(stime, 1, send_ser, argument=(sendcode,))
+    logging.info('<<< rf_kopp schedule to send code %s to nanocul at time %s', 
+                 sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
 
 
 def gpio_switch(switch, onoff, stime):
@@ -360,10 +390,12 @@ def main():
 
     # Switch command options
     # usage: switch_type[type]()
+    global switch_type
     switch_type = {
         'rf':    rf_switch,
         'comag': rf_comag,
         'zap':   rf_zap,
+        'kopp':  rf_kopp,
         'gpio':  gpio_switch,
         'pulse': gpio_pulse,
         'dummy': dummy_switch,
@@ -407,6 +439,26 @@ def main():
         print ("ERROR: The specified ini file doesn't exit!")
         return
 
+    # set logfile destination and log level
+    configure_logging(args.log, args.update, args.init)
+    
+    if config.has_option('DEFAULT', 'pulselength'):
+        pulse_comag=int(config['DEFAULT']['pulselength'])
+        logging.debug('Setting pulse_comag = %s',pulse_comag)
+        
+    if config.has_option('DEFAULT', 'zap_pulse'):
+        pulse_zap=int(config['DEFAULT']['zap_pulse'])
+        logging.debug('Setting pulse_zap = %s',pulse_zap)
+
+    if config.has_option('DEFAULT', 'kopp_time'):
+        kopp_time = config['DEFAULT']['kopp_time'].zfill(5)
+        logging.debug('Setting kopp_time = %s',kopp_time)
+
+    if config.has_option('DEFAULT', 'ser_port'):
+        logging.debug('Create serial interface %s',config['DEFAULT']['ser_port'])
+        global ser
+        ser = serial.Serial(config['DEFAULT']['ser_port'], 38400, timeout=0)
+        
     # Enable RF transmitter
     global rfdevice
     rfdevice = RFDevice(int(config['DEFAULT']['gpio']))
@@ -414,9 +466,6 @@ def main():
 
     # Time zone offset
     tzoffset = datetime.today().hour-datetime.utcnow().hour
-
-    # set logfile destination and log level
-    configure_logging(args.log, args.update, args.init)
 
     # get coordinates from address
     if args.address is not None:
@@ -483,7 +532,7 @@ def main():
     dt_start = dt + timedelta(minutes=interval - dt.minute % interval,
                         seconds=-(dt.second % 60),
                         microseconds=-(dt.microsecond % 1000000))
-    dt_end = dt+timedelta(minutes=interval)
+    dt_end = dt_start + timedelta(minutes=interval)
 
     logging.info("Get events between: %s and %s", dt_start, dt_end)
     results = calendar.date_search(
@@ -515,6 +564,7 @@ def main():
         # schedule events
         logging.debug('Define scheduler')
         global s
+        global e
         s = sched.scheduler(time.time, time.sleep)
         for event in results:
             event.load()
@@ -538,7 +588,6 @@ def main():
                 schedule_start = ((e_start >= dt_start.timestamp()) and
                            (e_start < dt_end.timestamp()))
                 schedule_end = (e_end <= dt_end.timestamp())
-
                 # has the event a recurrence rule?
                 try:
                     rrule = e.rrule.value
@@ -748,7 +797,9 @@ def main():
                     except:
                         logging.critical('Error: %s at %s + %s',
                                          e.summary.value,
-                                         e_start, r_time_1, '!')
+                                         datetime.fromtimestamp(
+                                             e_start).strftime('%Y-%m-%d %H:%M:%S'),
+                                         r_time_1, '!')
                 if schedule_end:
                     logging.debug(
                         'Switch off %s at %s %+.1f min',
@@ -756,12 +807,15 @@ def main():
                         datetime.fromtimestamp(e_end+r_time_2).strftime(
                             '%Y-%m-%d %H:%M:%S'),
                         r_time_2 / 60)
-                    try:
-                        switch_type[config[e.location.value]['type']](
+                    #try:
+                    switch_type[config[e.location.value]['type']](
                             e.location.value, False, e_end+r_time_2)
-                    except:
-                        logging.critical('Error for %s at %s+ %s',
-                                         e.summary.value, e_end, r_time_2)
+                    #except:
+                    logging.critical('Error for %s at %s + %s',
+                                         e.summary.value,
+                                         datetime.fromtimestamp(
+                                             e_end).strftime('%Y-%m-%d %H:%M:%S'),
+                                         r_time_2)
                 else:
                     logging.debug('End time %s is after current scheduler'
                                   ' interval, skipping end of event.',
@@ -776,7 +830,8 @@ def main():
         s.run()
         logging.info('<><><> Completed scheduled events'
                      ' for this time interval. <><><>')
-
+        ser.close()
+        
     else:
         logging.info('<> No calendar events in this time interval. <>')
 

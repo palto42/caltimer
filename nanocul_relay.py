@@ -25,6 +25,7 @@ GPIO.setwarnings(False)
 # constant definitions
 pulse_comag = 350
 pulse_zap = 187
+kopp_time = '00100'
 
 # set initial logging to stderr, level INFO
 logging.basicConfig(
@@ -50,9 +51,9 @@ logging.basicConfig(
 # Taste 2 aus : ktA031090300100N
 #===============================================================================
 
-#port = "/dev/ttyUSB.FTDI"
-port = "/dev/ttyUSB.Nano"
-ser = serial.Serial(port, 38400, timeout=0)
+# Serial port config moved to ini file
+#port = "/dev/ttyUSB.Nano"
+#ser = serial.Serial(port, 38400, timeout=0)
 
 
 def rf_switch(switch, onoff):
@@ -169,6 +170,30 @@ def rf_zap(switch, onoff):
         logging.error(
             'rf_zap undefined rf_code for switch %s, check ini file!', switch)
 
+def rf_kopp(switch, onoff, stime):
+    # Kopp code example
+    # 
+    # kt004B130300100N
+    # |||||||||||||||+-- Print output J/N
+    # ||||||||||+++++--- Key pressed in ms
+    # ||||++++++-------- Transmitter Code 1 + 2
+    # ||++-------------- Key code on/off
+    # ++---------------- kt = nanocul command for Kopp transmit
+
+    sendcode='kt'
+    if onoff:
+        if config.has_option(switch, 'key_on'):
+            sendcode += config[switch]['key_on']
+        else:
+            # calculate key_on from key_off by adding 0x10
+            sendcode += format(int(config[switch]['key_off'],base=16)+16,'X')
+    else:
+        sendcode += config[switch]['key_off']
+    sendcode += config[switch]['transmit_1'] + config[switch]['transmit_1'] + kopp_time + 'N'
+    logging.info('<<< rf_kopp send code %s to nanocul', sendcode)
+    x = ser.write((sencode+'\n').encode())
+    ser.close()
+    
 def configure_logging(log_arg, update, file):
     loglevel = {
         'CRITICAL': 50,
@@ -279,20 +304,31 @@ def main():
     if len(config) <= 1:
         print ("ERROR: The specified ini file doesn't exit!")
         return
-
-    if config.has_option('DEFAULT', 'pulselength'):
-        pulse_comag=int(config['DEFAULT']['pulselength'])
-        
-    if config.has_option('DEFAULT', 'zap_pulse'):
-        pulse_zap=int(config['DEFAULT']['zap_pulse'])
-
-        # Enable RF transmitter
-    global rfdevice
-    rfdevice = RFDevice(int(config['DEFAULT']['gpio']))
-    rfdevice.enable_tx()
     
     # set logfile destination and log level
     configure_logging(args.log, args.update, args.init)
+
+    if config.has_option('DEFAULT', 'pulselength'):
+        pulse_comag=int(config['DEFAULT']['pulselength'])
+        logging.debug('Setting pulse_comag = %s',pulse_comag)
+        
+    if config.has_option('DEFAULT', 'zap_pulse'):
+        pulse_zap=int(config['DEFAULT']['zap_pulse'])
+        logging.debug('Setting pulse_zap = %s',pulse_zap)
+
+    if config.has_option('DEFAULT', 'kopp_time'):
+        kopp_time = config['DEFAULT']['kopp_time'].zfill(5)
+        logging.debug('Setting kopp_time = %s',kopp_time)
+
+    if config.has_option('DEFAULT', 'ser_port'):
+        logging.debug('Create serial interface %s',config['DEFAULT']['ser_port'])
+        global ser
+        ser = serial.Serial(config['DEFAULT']['ser_port'], 38400, timeout=0)
+
+    # Enable RF transmitter
+    global rfdevice
+    rfdevice = RFDevice(int(config['DEFAULT']['gpio']))
+    rfdevice.enable_tx()
     
     relays=[]
     #receive_code=dict()
@@ -301,11 +337,18 @@ def main():
     for i in config.sections():
         if config.has_option(i, 'relay'):
             relays.append(i)
-            #receive_code[i]=config[i]['transmit_1']+config[i]['transmit_2']
-            on_code[(config[i]['transmit_1']+config[i]['transmit_2']+
-                     config[i]['key_on']).encode()]=config[i]['relay'].split(',')
             off_code[(config[i]['transmit_1']+config[i]['transmit_2']+
                       config[i]['key_off']).encode()]=config[i]['relay'].split(',')
+            if config.has_option(i, 'key_on'):
+                on_code[(config[i]['transmit_1']+config[i]['transmit_2']+
+                         config[i]['key_on']).encode()]=config[i]['relay'].split(',')
+            else:
+                # calculate key_on from key_off by adding 0x10
+                key_on=format(int(config[i]['key_off'],base=16)+16,'X')
+                on_code[(config[i]['transmit_1']+config[i]['transmit_2']+
+                         key_on).encode()]=config[i]['relay'].split(',')
+                print(key_on,config[i]['key_off'])
+            #receive_code[i]=config[i]['transmit_1']+config[i]['transmit_2']
             #print(receive_code[i],on_code[i],off_code[i])
             logging.debug('Transmitter %s is relayed to %s',i,config[i]['relay'].split(','))
     logging.info('Relays found: %s',relays)
