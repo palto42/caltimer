@@ -192,7 +192,6 @@ def rf_kopp(switch, onoff, stime):
     sendcode += config[switch]['transmit_1'] + config[switch]['transmit_1'] + kopp_time + 'N'
     logging.info('<<< rf_kopp send code %s to nanocul', sendcode)
     x = ser.write((sencode+'\n').encode())
-    ser.close()
     
 def configure_logging(log_arg, update, file):
     loglevel = {

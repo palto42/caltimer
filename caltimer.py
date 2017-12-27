@@ -23,7 +23,7 @@
 #   end_offset : offset in minutes                      #
 #                                                       #
 # Matthias Homann                                       #
-# 2017-12-24                                            #
+# 2017-12-27                                            #
 # #######################################################
 
 import logging
@@ -56,8 +56,11 @@ logging.basicConfig(
     level=logging.INFO)
 
 def send_ser (code):
-    x = ser.write(code.encode()+b'\n')
-    logging.debug('Serial send code = %s', code)
+    try:
+        x = ser.write(code.encode()+b'\n')
+        logging.debug('Serial send code = %s', code)
+    except:
+        logging.error("Tried to send code %s, but serial port not defined or available.", code)
 
 def rf_switch(switch, onoff, stime):
     if onoff:
@@ -199,12 +202,17 @@ def rf_kopp(switch, onoff, stime):
         else:
             # calculate key_on from key_off by adding 0x10
             sendcode += format(int(config[switch]['key_off'],base=16)+16,'X')
+        switch_state="on" 
     else:
         sendcode += config[switch]['key_off']
-    sendcode += config[switch]['transmit_1'] + config[switch]['transmit_2'] + kopp_time + 'N'
+        switch_state="off"
+    sendcode += (config[switch]['transmit_1']
+                 + config[switch]['transmit_2']
+                 + kopp_time + 'N')
     s.enterabs(stime, 1, send_ser, argument=(sendcode,))
-    logging.info('<<< rf_kopp schedule to send code %s to nanocul at time %s', 
-                 sendcode, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
+    logging.info('<<< rf_kopp schedule to send %s code %s to nanocul for switch % s at time %s',
+                 switch_state, sendcode, switch,
+                 time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
 
 
 def gpio_switch(switch, onoff, stime):
@@ -369,16 +377,15 @@ def get_sun(offset, m_rise, m_set):
 def switch_defined(switch):
     if not config.has_section(switch):
         logging.error(
-            '>>> Event "%s" at %s has an undefined RF-switch "%s"'
+            '>>> Event has an undefined RF-switch "%s"'
             ', skipping this event.',
-            e.summary.value, e.dtstart.value.strftime("%H:%M"),
-            e.location.value)
+            switch)
         return False
-    elif not config[e.location.value]['type'] in switch_type:
+    elif not config[switch]['type'] in switch_type:
         logging.error(
             '>>> RF-switch "%s" uses undefined type "%s" , '
             'check ini file. Skipping this event.',
-            e.location.value, config[e.location.value]['type'])
+            switch, config[switch]['type'])
         return False
     return True
 
@@ -455,10 +462,13 @@ def main():
         logging.debug('Setting kopp_time = %s',kopp_time)
 
     if config.has_option('DEFAULT', 'ser_port'):
-        logging.debug('Create serial interface %s',config['DEFAULT']['ser_port'])
-        global ser
-        ser = serial.Serial(config['DEFAULT']['ser_port'], 38400, timeout=0)
-        
+        try:
+            logging.debug('Create serial interface %s',config['DEFAULT']['ser_port'])
+            global ser
+            ser = serial.Serial(config['DEFAULT']['ser_port'], 38400, timeout=0)
+        except:
+            logging.error("Can't open serial port %s, check ini file.",config['DEFAULT']['ser_port'])
+
     # Enable RF transmitter
     global rfdevice
     rfdevice = RFDevice(int(config['DEFAULT']['gpio']))
@@ -564,7 +574,6 @@ def main():
         # schedule events
         logging.debug('Define scheduler')
         global s
-        global e
         s = sched.scheduler(time.time, time.sleep)
         for event in results:
             event.load()
@@ -807,11 +816,11 @@ def main():
                         datetime.fromtimestamp(e_end+r_time_2).strftime(
                             '%Y-%m-%d %H:%M:%S'),
                         r_time_2 / 60)
-                    #try:
-                    switch_type[config[e.location.value]['type']](
+                    try:
+                        switch_type[config[e.location.value]['type']](
                             e.location.value, False, e_end+r_time_2)
-                    #except:
-                    logging.critical('Error for %s at %s + %s',
+                    except:
+                        logging.critical('Error for %s at %s + %s',
                                          e.summary.value,
                                          datetime.fromtimestamp(
                                              e_end).strftime('%Y-%m-%d %H:%M:%S'),
@@ -830,8 +839,10 @@ def main():
         s.run()
         logging.info('<><><> Completed scheduled events'
                      ' for this time interval. <><><>')
-        ser.close()
-        
+        try:
+            ser.close()
+        finally:
+            logging.debug('No serial used, nothing to close.')
     else:
         logging.info('<> No calendar events in this time interval. <>')
 
