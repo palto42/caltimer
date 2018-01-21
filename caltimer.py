@@ -48,6 +48,10 @@ import serial
 pulse_comag = 350
 pulse_zap = 187
 kopp_time = '00100'
+switch_state = {
+    True  : "ON",
+    False : "OFF",
+    }
 
 # set initial logging to stderr, level INFO
 logging.basicConfig(
@@ -67,8 +71,8 @@ def rf_switch(switch, onoff, stime):
         sendcode = config[switch]['oncode']
     else:
         sendcode = config[switch]['offcode']
-    logging.info('<<< rf_switch schedule to send RF code %s at time %s via %s',
-                 sendcode,
+    logging.info('<<< rf_switch schedule to send %s code %s for switch %s at time %s via %s',
+                 switch_state[onoff], sendcode, switch,
                  time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)),
                  config[switch]['rf_code'])
     if config[switch]['rf_code'] == "rf433":
@@ -111,8 +115,8 @@ def rf_comag(switch, onoff, stime):
         if c == "0":
             sendcode = sendcode | 1
     logging.debug('*** Comag sendcode = %s', '{:08b}'.format(sendcode))
-    logging.info('<<< rf_comag schedule to send RF code %s at time %s via %s',
-                 sendcode,
+    logging.info('<<< rf_comag schedule to send %s code %s for switch %s at time %s via %s',
+                 switch_state[onoff], sendcode, switch,
                  time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)),
                  config[switch]['rf_code'])
     if config[switch]['rf_code'] == "rf433":
@@ -169,8 +173,8 @@ def rf_zap(switch, onoff, stime):
     else:
         sendcode = sendcode | 12
     logging.debug('*** ZAP sendcode = %s', '{:08b}'.format(sendcode))
-    logging.info('<<< rf_zap schedule to send RF code %s at time %s via %s',
-                 sendcode,
+    logging.info('<<< rf_zap schedule to send %s code %s for switch %s at time %s via %s',
+                 switch_state[onoff], sendcode, switch,
                  time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)),
                  config[switch]['rf_code'])
     if config[switch]['rf_code'] == "rf433":
@@ -202,16 +206,14 @@ def rf_kopp(switch, onoff, stime):
         else:
             # calculate key_on from key_off by adding 0x10
             sendcode += format(int(config[switch]['key_off'],base=16)+16,'X')
-        switch_state="on" 
     else:
         sendcode += config[switch]['key_off']
-        switch_state="off"
     sendcode += (config[switch]['transmit_1']
                  + config[switch]['transmit_2']
                  + kopp_time + 'N')
     s.enterabs(stime, 1, send_ser, argument=(sendcode,))
     logging.info('<<< rf_kopp schedule to send %s code %s to nanocul for switch % s at time %s',
-                 switch_state, sendcode, switch,
+                 switch_state[onoff], sendcode, switch,
                  time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
 
 
