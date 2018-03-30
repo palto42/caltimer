@@ -51,3 +51,4 @@ Unfortunately this library onyl provides a binary an not python code, but the ma
 The RF433 transmitter is conencted to GPIO 17 (WiringPi 0) and the receiver on GPIO 27 (WiringPi 2). 
 
 The receiver is only used to sniff the switch code if it is not known. It's not required for this scheduler script.
+
