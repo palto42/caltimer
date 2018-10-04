@@ -10,7 +10,8 @@ from time import sleep
 #~ ++------------------------ kr wird von der culfw bei Empfang einer Kopp Botschaft als 
 
 #port = "/dev/ttyUSB.FTDI"
-port = "/dev/ttyUSB.Nano"
+#port = "/dev/ttyUSB.Nano"
+port = "/dev/ttyAMA0"
 ser = serial.Serial(port, 38400, timeout=0)
 
 while True:
