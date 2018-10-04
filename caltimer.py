@@ -92,10 +92,10 @@ def rf_switch(switch, onoff, stime):
 
 def rf_comag(switch, onoff, stime):
     # Comag code calculation:
-    # switch 0 = binary "01"
-    # switch 1 = binary "00"
-    # ON  = 10 = binary "0001"
-    # OFF = 01 = binary "0100"
+    # switch OFF = "0" = binary "01" = tri-state "F"
+    # switch ON  = "1" = binary "00" = tri-state "0"
+    # ON  = binary "0001" = tri-state "0F"
+    # OFF = binary "0100" = tri-state "F0"
     #
     # Example:
     # Channel   Socket    ON/OFF
