@@ -23,7 +23,7 @@
 #   end_offset : offset in minutes                      #
 #                                                       #
 # Matthias Homann                                       #
-# 2017-11-05                                            #
+# 2017-12-27                                            #
 # #######################################################
 
 import logging
@@ -40,10 +40,18 @@ from sunrise_sunset import SunriseSunset
 import RPi.GPIO as GPIO
 from rpi_rf import RFDevice
 import argparse
+import requests
+import serial
 
-# constant definitions
+# Default pulse length definitions
+# Can be overwritten from ini file settings
 pulse_comag = 350
 pulse_zap = 187
+kopp_time = '00100'
+switch_state = {
+    True  : "ON",
+    False : "OFF",
+    }
 
 # set initial logging to stderr, level INFO
 logging.basicConfig(
@@ -51,14 +59,20 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(module)s - %(message)s',
     level=logging.INFO)
 
+def send_ser (code):
+    try:
+        x = ser.write(code.encode()+b'\n')
+        logging.debug('Serial send code = %s', code)
+    except:
+        logging.error("Tried to send code %s, but serial port not defined or available.", code)
 
 def rf_switch(switch, onoff, stime):
     if onoff:
         sendcode = config[switch]['oncode']
     else:
         sendcode = config[switch]['offcode']
-    logging.info('<<< rf_switch schedule to send RF code %s at time %s via %s',
-                 sendcode,
+    logging.info('<<< rf_switch schedule to send %s code %s for switch %s at time %s via %s',
+                 switch_state[onoff], sendcode, switch,
                  time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)),
                  config[switch]['rf_code'])
     if config[switch]['rf_code'] == "rf433":
@@ -78,10 +92,10 @@ def rf_switch(switch, onoff, stime):
 
 def rf_comag(switch, onoff, stime):
     # Comag code calculation:
-    # switch 0 = binary "01"
-    # switch 1 = binary "00"
-    # ON  = 10 = binary "0001"
-    # OFF = 01 = binary "0100"
+    # switch OFF = "0" = binary "01" = tri-state "F"
+    # switch ON  = "1" = binary "00" = tri-state "0"
+    # ON  = binary "0001" = tri-state "0F"
+    # OFF = binary "0100" = tri-state "F0"
     #
     # Example:
     # Channel   Socket    ON/OFF
@@ -101,8 +115,8 @@ def rf_comag(switch, onoff, stime):
         if c == "0":
             sendcode = sendcode | 1
     logging.debug('*** Comag sendcode = %s', '{:08b}'.format(sendcode))
-    logging.info('<<< rf_comag schedule to send RF code %s at time %s via %s',
-                 sendcode,
+    logging.info('<<< rf_comag schedule to send %s code %s for switch %s at time %s via %s',
+                 switch_state[onoff], sendcode, switch,
                  time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)),
                  config[switch]['rf_code'])
     if config[switch]['rf_code'] == "rf433":
@@ -116,7 +130,6 @@ def rf_comag(switch, onoff, stime):
         logging.error(
             'rf_comag undefined rf_code for switch %s, check ini file!',
             switch)
-
 
 def rf_zap(switch, onoff, stime):
     # ZAP/REV code calculation:_
@@ -160,8 +173,8 @@ def rf_zap(switch, onoff, stime):
     else:
         sendcode = sendcode | 12
     logging.debug('*** ZAP sendcode = %s', '{:08b}'.format(sendcode))
-    logging.info('<<< rf_zap schedule to send RF code %s at time %s via %s',
-                 sendcode,
+    logging.info('<<< rf_zap schedule to send %s code %s for switch %s at time %s via %s',
+                 switch_state[onoff], sendcode, switch,
                  time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)),
                  config[switch]['rf_code'])
     if config[switch]['rf_code'] == "rf433":
@@ -174,6 +187,34 @@ def rf_zap(switch, onoff, stime):
     else:
         logging.error(
             'rf_zap undefined rf_code for switch %s, check ini file!', switch)
+
+
+def rf_kopp(switch, onoff, stime):
+    # Kopp code example
+    # 
+    # kt004B130300100N
+    # |||||||||||||||+-- Print output J/N
+    # ||||||||||+++++--- Key pressed in ms
+    # ||||++++++-------- Transmitter Code 1 + 2
+    # ||++-------------- Key code on/off
+    # ++---------------- kt = nanocul command for Kopp transmit
+
+    sendcode='kt'
+    if onoff:
+        if config.has_option(switch, 'key_on'):
+            sendcode += config[switch]['key_on']
+        else:
+            # calculate key_on from key_off by adding 0x10
+            sendcode += format(int(config[switch]['key_off'],base=16)+16,'X')
+    else:
+        sendcode += config[switch]['key_off']
+    sendcode += (config[switch]['transmit_1']
+                 + config[switch]['transmit_2']
+                 + kopp_time + 'N')
+    s.enterabs(stime, 1, send_ser, argument=(sendcode,))
+    logging.info('<<< rf_kopp schedule to send %s code %s to nanocul for switch % s at time %s',
+                 switch_state[onoff], sendcode, switch,
+                 time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
 
 
 def gpio_switch(switch, onoff, stime):
@@ -219,7 +260,7 @@ def dummy_switch(switch, onoff, stime):
                argument=('Dummy event action: %s', onoff))
 
 
-def configure_logging(log_arg):
+def configure_logging(log_arg, update, file):
     loglevel = {
         'CRITICAL': 50,
         'ERROR':    40,
@@ -279,6 +320,9 @@ def configure_logging(log_arg):
         try:
             logging.info('Set loglevel: %s', log_arg)
             logging.getLogger().setLevel(loglevel[log_arg.upper()])
+            if update:
+                config.set('LOGGING','loglevel',log_arg.upper())
+                update_ini(file)
         except:
             print ('ERROR: Incorrect loging level specified, '
                    'using log evel "ERROR"')
@@ -296,6 +340,58 @@ def configure_logging(log_arg):
             logging.getLogger().setLevel(logging.ERROR)
 
 
+def get_location(file,address):
+    response = requests.get('https://maps.googleapis.com/maps/api/geocode/json?address='+address)
+    resp_json_payload = response.json()
+    latitude = resp_json_payload['results'][0]['geometry']['location']['lat']
+    longitude = resp_json_payload['results'][0]['geometry']['location']['lng']
+    logging.info('Found coordinates for address %s: latitude=%s, longitude=%s', 
+                 address, latitude, longitude)
+    config.set('CALENDAR','latitude',str(latitude))
+    config.set('CALENDAR','longitude',str(longitude))
+    
+
+def update_ini(file):
+    logging.warning('Saving updates to ini file')
+    # Note: writing the ini file will remove all comments!
+    with open(file, 'w') as configfile:
+        config.write(configfile)
+
+
+def get_sun(offset, m_rise, m_set):
+    # calculate sunrise and sunset times for specified location
+    ro = SunriseSunset(
+        datetime.now(), latitude=float(config['CALENDAR']['latitude']),
+        longitude=float(config['CALENDAR']['longitude']),
+        localOffset=offset)
+    rise_time, set_time = ro.calculate()
+    # overwrite sun times for test purposes
+    if m_rise is not None:
+        rise_time = datetime.strptime(str(date.today())+" "+m_rise,
+                                      "%Y-%m-%d %H:%M")
+    if m_set is not None:
+        temp_time = str(date.today())+" "+args.sun_set
+        set_time = datetime.strptime(str(date.today())+" "+m_set,
+                                     "%Y-%m-%d %H:%M")
+    logging.info('Sunrise %s, sunset %s', rise_time, set_time)
+    return rise_time, set_time
+
+def switch_defined(switch):
+    if not config.has_section(switch):
+        logging.error(
+            '>>> Event has an undefined RF-switch "%s"'
+            ', skipping this event.',
+            switch)
+        return False
+    elif not config[switch]['type'] in switch_type:
+        logging.error(
+            '>>> RF-switch "%s" uses undefined type "%s" , '
+            'check ini file. Skipping this event.',
+            switch, config[switch]['type'])
+        return False
+    return True
+
+
 #############################################################
 # MAIN                                                      #
 #############################################################
@@ -303,15 +399,21 @@ def main():
 
     # Switch command options
     # usage: switch_type[type]()
+    global switch_type
     switch_type = {
         'rf':    rf_switch,
         'comag': rf_comag,
         'zap':   rf_zap,
+        'kopp':  rf_kopp,
         'gpio':  gpio_switch,
         'pulse': gpio_pulse,
         'dummy': dummy_switch,
         }
 
+    # Raspberry Pi GPIO settings
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)
+    
     # Comamnd line arguments
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawTextHelpFormatter)
@@ -328,6 +430,11 @@ def main():
                         help='manually set the sunrise time as "06:00"')
     parser.add_argument('-s', '--sun-set',
                         help='manually set the sunset time as "21:00"')
+    parser.add_argument('-a', '--address',
+                        help='Get coordinates from address')
+    parser.add_argument('-u', '--update',
+                        help='Update ini file (e.g. log level)',
+                        action='store_true')
     args = parser.parse_args()
 
     # Read ini file for RC switch definition
@@ -341,9 +448,28 @@ def main():
         print ("ERROR: The specified ini file doesn't exit!")
         return
 
-    # Raspberry Pi GPIO settings
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setwarnings(False)
+    # set logfile destination and log level
+    configure_logging(args.log, args.update, args.init)
+    
+    if config.has_option('DEFAULT', 'pulselength'):
+        pulse_comag=int(config['DEFAULT']['pulselength'])
+        logging.debug('Setting pulse_comag = %s',pulse_comag)
+        
+    if config.has_option('DEFAULT', 'zap_pulse'):
+        pulse_zap=int(config['DEFAULT']['zap_pulse'])
+        logging.debug('Setting pulse_zap = %s',pulse_zap)
+
+    if config.has_option('DEFAULT', 'kopp_time'):
+        kopp_time = config['DEFAULT']['kopp_time'].zfill(5)
+        logging.debug('Setting kopp_time = %s',kopp_time)
+
+    if config.has_option('DEFAULT', 'ser_port'):
+        try:
+            logging.debug('Create serial interface %s',config['DEFAULT']['ser_port'])
+            global ser
+            ser = serial.Serial(config['DEFAULT']['ser_port'], 38400, timeout=0)
+        except:
+            logging.error("Can't open serial port %s, check ini file.",config['DEFAULT']['ser_port'])
 
     # Enable RF transmitter
     global rfdevice
@@ -353,8 +479,12 @@ def main():
     # Time zone offset
     tzoffset = datetime.today().hour-datetime.utcnow().hour
 
-    # set logfile destination and log level
-    configure_logging(args.log)
+    # get coordinates from address
+    if args.address is not None:
+        config.set('CALENDAR','location',args.address)
+        get_location(args.init, args.address)
+        if args.update:
+            update_ini(args.init)
 
     # Set Caldav url
     try:
@@ -368,6 +498,9 @@ def main():
     try:
         if args.time_interval is not None:
             interval = int(args.time_interval)
+            if args.update:
+                config.set('CALENDAR','interval',args.time_interval)
+                update_ini(args.init)
         else:
             interval = int(config['CALENDAR']['interval'])
     except:
@@ -411,7 +544,7 @@ def main():
     dt_start = dt + timedelta(minutes=interval - dt.minute % interval,
                         seconds=-(dt.second % 60),
                         microseconds=-(dt.microsecond % 1000000))
-    dt_end = dt+timedelta(minutes=interval)
+    dt_end = dt_start + timedelta(minutes=interval)
 
     logging.info("Get events between: %s and %s", dt_start, dt_end)
     results = calendar.date_search(
@@ -424,24 +557,22 @@ def main():
     r_time_2 = 0
 
     if len(results) > 0:
-        # calculate sunrise and sunset
-        # use caluclated "tzoffset" instead on "local_offset" from ini file
-        ro = SunriseSunset(
-            datetime.now(), latitude=float(config['CALENDAR']['latitude']),
-            longitude=float(config['CALENDAR']['longitude']),
-            localOffset=tzoffset)
-        rise_time, set_time = ro.calculate()
-        # set sun times manually for test purposes
-        if args.sun_rise is not None:
-            rise_time = datetime.strptime(str(date.today())+" "+args.sun_rise,
-                                          "%Y-%m-%d %H:%M")
-        if args.sun_set is not None:
-            temp_time = str(date.today())+" "+args.sun_set
-            set_time = datetime.strptime(str(date.today())+" "+args.sun_set,
-                                         "%Y-%m-%d %H:%M")
+        # check if longitude/latitude is set in ini file
+        # otherwise use location to query them from google maps
+        if not (config.has_option('CALENDAR','latitude') and 
+                config.has_option('CALENDAR','longitude')):
+            if config.has_option('CALENDAR','location'):
+                logging.info('Get coordinates from location address')
+                get_location(args.init, config['CALENDAR']['location'])
+                if args.update:
+                    update_ini(args.init)
+            else:
+                logging.error('Coordinates and location not defined, exit')
+                return
 
-        logging.info('Sunrise %s, sunset %s', rise_time, set_time)
-
+        # get sunrise and sunset
+        rise_time, set_time = get_sun(tzoffset, args.sun_rise,args.sun_set)
+        
         # schedule events
         logging.debug('Define scheduler')
         global s
@@ -453,19 +584,7 @@ def main():
             schedule_end = False
             # check if the event has a known switch 
             # defined in the location field
-            if not config.has_section(e.location.value):
-                logging.error(
-                    '>>> Event "%s" at %s has an undefined RF-switch "%s"'
-                    ', skipping this event.',
-                    e.summary.value, e.dtstart.value.strftime("%H:%M"),
-                    e.location.value)
-            elif not config[e.location.value]['type'] in switch_type:
-                logging.error(
-                    '>>> RF-switch "%s" uses undefined type "%s" , '
-                    'check ini file. Skipping this event.',
-                    e.location.value, config[e.location.value]['type'])
-            # found known switch, get event start/stop times
-            else:
+            if switch_defined(e.location.value):
                 # Calculate event start/end time for current date
                 # (required for recurring events)
                 # TODO: possible issue if interval would span across midnight
@@ -480,7 +599,6 @@ def main():
                 schedule_start = ((e_start >= dt_start.timestamp()) and
                            (e_start < dt_end.timestamp()))
                 schedule_end = (e_end <= dt_end.timestamp())
-
                 # has the event a recurrence rule?
                 try:
                     rrule = e.rrule.value
@@ -690,7 +808,9 @@ def main():
                     except:
                         logging.critical('Error: %s at %s + %s',
                                          e.summary.value,
-                                         e_start, r_time_1, '!')
+                                         datetime.fromtimestamp(
+                                             e_start).strftime('%Y-%m-%d %H:%M:%S'),
+                                         r_time_1, '!')
                 if schedule_end:
                     logging.debug(
                         'Switch off %s at %s %+.1f min',
@@ -702,8 +822,11 @@ def main():
                         switch_type[config[e.location.value]['type']](
                             e.location.value, False, e_end+r_time_2)
                     except:
-                        logging.critical('Error for %s at %s+ %s',
-                                         e.summary.value, e_end, r_time_2)
+                        logging.critical('Error for %s at %s + %s',
+                                         e.summary.value,
+                                         datetime.fromtimestamp(
+                                             e_end).strftime('%Y-%m-%d %H:%M:%S'),
+                                         r_time_2)
                 else:
                     logging.debug('End time %s is after current scheduler'
                                   ' interval, skipping end of event.',
@@ -718,7 +841,10 @@ def main():
         s.run()
         logging.info('<><><> Completed scheduled events'
                      ' for this time interval. <><><>')
-
+        try:
+            ser.close()
+        finally:
+            logging.debug('No serial used, nothing to close.')
     else:
         logging.info('<> No calendar events in this time interval. <>')
 
