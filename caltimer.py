@@ -44,15 +44,16 @@ import argparse
 import requests
 import serial
 
-# Default pulse length definitions
-# Can be overwritten from ini file settings
-pulse_comag = 350
-pulse_zap = 187
-kopp_time = '00100'
 switch_state = {
     True: "ON",
     False: "OFF",
     }
+
+
+# Default pulse length definitions
+# Can be overwritten from ini file settings
+pulse_zap = 187
+kopp_time = '00100'
 
 # set initial logging to stderr, level INFO
 logging.basicConfig(
@@ -79,19 +80,19 @@ def rf_switch(switch, onoff, stime):
                  'for switch %s at time %s via %s',
                  switch_state[onoff], sendcode, switch,
                  time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)),
-                 config[switch]['rf_code'])
-    if config[switch]['rf_code'] == "rf433":
+                 config[switch]['rf433_tool'])
+    if config[switch]['rf433_tool'] == 'codesend':
         s.enterabs(stime, 1, subprocess.call,
-                   argument=([config['DEFAULT']['rf433'], sendcode,
-                              config[switch]['protocol'],
-                              config[switch]['pulselength']],))
-    elif config[switch]['rf_code'] == "rpi-rf":
+                   argument=([config['DEFAULT']['codesend_path'], sendcode,
+                              config[switch]['rf433_protocol'],
+                              config[switch]['rf433_pulselength']],))
+    elif config[switch]['rf433_tool'] == "rpi-rf":
         s.enterabs(stime, 1, rfdevice.tx_code, argument=(
-            int(sendcode), int(config[switch]['protocol']),
-            int(config[switch]['pulselength'])))
+            int(sendcode), int(config[switch]['rf433_protocol']),
+            int(config[switch]['rf433_pulselength'])))
     else:
         logging.error(
-            'rf_switch undefined rf_code for switch %s, check ini file!',
+            'rf_switch undefined rf433_tool for switch %s, check ini file!',
             switch)
 
 
@@ -124,17 +125,19 @@ def rf_comag(switch, onoff, stime):
                  'for switch %s at time %s via %s',
                  switch_state[onoff], sendcode, switch,
                  time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)),
-                 config[switch]['rf_code'])
-    if config[switch]['rf_code'] == "rf433":
+                 config[switch]['rf433_tool'])
+    if config[switch]['rf433_tool'] == 'codesend':
         s.enterabs(stime, 1, subprocess.call,
-                   argument=([config['DEFAULT']['rf433'],
-                              str(sendcode), "1", str(pulse_comag)],))
-    elif config[switch]['rf_code'] == "rpi-rf":
+                   argument=([config['DEFAULT']['codesend_path'],
+                              str(sendcode), "1",
+                              config[switch]['rf433_pulselength']],))
+    elif config[switch]['rf433_tool'] == "rpi-rf":
         s.enterabs(stime, 1, rfdevice.tx_code,
-                   argument=(int(sendcode), 1, pulse_comag))
+                   argument=(int(sendcode), 1,
+                             config[switch]['rf433_pulselength']))
     else:
         logging.error(
-            'rf_comag undefined rf_code for switch %s, check ini file!',
+            'rf_comag undefined rf433_tool for switch %s, check ini file!',
             switch)
 
 
@@ -184,18 +187,19 @@ def rf_zap(switch, onoff, stime):
                  'for switch %s at time %s via %s',
                  switch_state[onoff], sendcode, switch,
                  time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)),
-                 config[switch]['rf_code'])
-    if config[switch]['rf_code'] == "rf433":
+                 config[switch]['rf433_tool'])
+    if config[switch]['rf433_tool'] == "rf433":
         s.enterabs(
             stime, 1, subprocess.call,
-            argument=([config['DEFAULT']['rf433'],
+            argument=([config['DEFAULT']['codesend_path'],
                        str(sendcode), "1", str(pulse_zap)],))
-    elif config[switch]['rf_code'] == "rpi-rf":
+    elif config[switch]['rf433_tool'] == "rpi-rf":
         s.enterabs(stime, 1, rfdevice.tx_code,
                    argument=(sendcode, 1, pulse_zap))
     else:
         logging.error(
-            'rf_zap undefined rf_code for switch %s, check ini file!', switch)
+            'rf_zap undefined rf433_tool for switch %s, check ini file!',
+            switch)
 
 
 def rf_kopp(switch, onoff, stime):
@@ -330,9 +334,6 @@ def set_log_level(log_arg, update, file):
         logging.error('Incorrect loging level "%s" specified.', log_arg)
     logging.info('Set loglevel: %s', log_arg)
     logging.getLogger().setLevel(loglevel[log_arg.upper()])
-    if update and log_arg in loglevel:
-        config.set('LOGGING', 'loglevel', log_arg.upper())
-        update_ini(file)
 
 
 def get_location(file, address):
@@ -345,13 +346,6 @@ def get_location(file, address):
                  address, latitude, longitude)
     config.set('CALENDAR', 'latitude', str(latitude))
     config.set('CALENDAR', 'longitude', str(longitude))
-
-
-def update_ini(file):
-    logging.warning('Saving updates to ini file')
-    # Note: writing the ini file will remove all comments!
-    with open(file, 'w') as configfile:
-        config.write(configfile)
 
 
 def get_sun(offset, m_rise, m_set):
@@ -379,11 +373,11 @@ def switch_defined(switch):
             ', skipping this event.',
             switch)
         return False
-    elif not config[switch]['type'] in switch_type:
+    elif not config[switch]['rf_type'] in switch_type:
         logging.error(
             '>>> RF-switch "%s" uses undefined type "%s" , '
             'check ini file. Skipping this event.',
-            switch, config[switch]['type'])
+            switch, config[switch]['rf_type'])
         return False
     return True
 
@@ -397,7 +391,7 @@ def main():
     # usage: switch_type[type]()
     global switch_type
     switch_type = {
-        'rf':    rf_switch,
+        'rf433': rf_switch,
         'comag': rf_comag,
         'zap':   rf_zap,
         'kopp':  rf_kopp,
@@ -448,10 +442,6 @@ def main():
     open_log_file(config['LOGGING']['logfile'])
     set_log_level(args.log, args.update, args.init)
 
-    if config.has_option('DEFAULT', 'pulselength'):
-        pulse_comag = int(config['DEFAULT']['pulselength'])
-        logging.debug('Setting pulse_comag = %s', pulse_comag)
-
     if config.has_option('DEFAULT', 'zap_pulse'):
         pulse_zap = int(config['DEFAULT']['zap_pulse'])
         logging.debug('Setting pulse_zap = %s', pulse_zap)
@@ -473,7 +463,7 @@ def main():
 
     # Enable RF transmitter
     global rfdevice
-    rfdevice = RFDevice(int(config['DEFAULT']['gpio']))
+    rfdevice = RFDevice(int(config['DEFAULT']['rf433_gpio']))
     rfdevice.enable_tx()
 
     # Time zone offset
@@ -483,8 +473,6 @@ def main():
     if args.address is not None:
         config.set('CALENDAR', 'location', args.address)
         get_location(args.init, args.address)
-        if args.update:
-            update_ini(args.init)
 
     # Set Caldav url
     if config.has_option('CALENDAR', 'caldav'):
@@ -498,11 +486,8 @@ def main():
     try:
         if args.time_interval is not None:
             interval = int(args.time_interval)
-            if args.update:
-                config.set('CALENDAR', 'interval', args.time_interval)
-                update_ini(args.init)
         else:
-            interval = int(config['CALENDAR']['interval'])
+            interval = int(config['DEFAULT']['interval'])
     except ValueError:
         logging.error(
             'Defined scheduler time interval is not an integer number!')
@@ -564,8 +549,6 @@ def main():
             if config.has_option('CALENDAR', 'location'):
                 logging.info('Get coordinates from location address')
                 get_location(args.init, config['CALENDAR']['location'])
-                if args.update:
-                    update_ini(args.init)
             else:
                 logging.error('Coordinates and location not defined, exit')
                 return
@@ -806,7 +789,7 @@ def main():
                             '%Y-%m-%d %H:%M:%S'),
                         r_time_1 / 60)
                     try:
-                        switch_type[config[e.location.value]['type']](
+                        switch_type[config[e.location.value]['rf_type']](
                             e.location.value, True, e_start+r_time_1)
                     except:
                         logging.critical(
@@ -822,7 +805,7 @@ def main():
                             '%Y-%m-%d %H:%M:%S'),
                         r_time_2 / 60)
                     try:
-                        switch_type[config[e.location.value]['type']](
+                        switch_type[config[e.location.value]['rf_type']](
                             e.location.value, False, e_end+r_time_2)
                     except:
                         logging.critical(
