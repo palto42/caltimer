@@ -23,11 +23,12 @@
 #   end_offset : offset in minutes                      #
 #                                                       #
 # Matthias Homann                                       #
-# 2017-12-27                                            #
+# 2018-10-07                                            #
 # #######################################################
 
 import logging
 import sys
+import errno
 import configparser
 import subprocess
 import sched
@@ -49,8 +50,8 @@ pulse_comag = 350
 pulse_zap = 187
 kopp_time = '00100'
 switch_state = {
-    True  : "ON",
-    False : "OFF",
+    True: "ON",
+    False: "OFF",
     }
 
 # set initial logging to stderr, level INFO
@@ -59,19 +60,23 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(module)s - %(message)s',
     level=logging.INFO)
 
-def send_ser (code):
+
+def send_ser(code):
     try:
-        x = ser.write(code.encode()+b'\n')
+        ser.write(code.encode()+b'\n')
         logging.debug('Serial send code = %s', code)
-    except:
-        logging.error("Tried to send code %s, but serial port not defined or available.", code)
+    except serial.SerialException:
+        logging.error("Tried to send code %s, "
+                      "but serial port not defined or available.", code)
+
 
 def rf_switch(switch, onoff, stime):
     if onoff:
         sendcode = config[switch]['oncode']
     else:
         sendcode = config[switch]['offcode']
-    logging.info('<<< rf_switch schedule to send %s code %s for switch %s at time %s via %s',
+    logging.info('<<< rf_switch schedule to send %s code %s '
+                 'for switch %s at time %s via %s',
                  switch_state[onoff], sendcode, switch,
                  time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)),
                  config[switch]['rf_code'])
@@ -115,7 +120,8 @@ def rf_comag(switch, onoff, stime):
         if c == "0":
             sendcode = sendcode | 1
     logging.debug('*** Comag sendcode = %s', '{:08b}'.format(sendcode))
-    logging.info('<<< rf_comag schedule to send %s code %s for switch %s at time %s via %s',
+    logging.info('<<< rf_comag schedule to send %s code %s '
+                 'for switch %s at time %s via %s',
                  switch_state[onoff], sendcode, switch,
                  time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)),
                  config[switch]['rf_code'])
@@ -130,6 +136,7 @@ def rf_comag(switch, onoff, stime):
         logging.error(
             'rf_comag undefined rf_code for switch %s, check ini file!',
             switch)
+
 
 def rf_zap(switch, onoff, stime):
     # ZAP/REV code calculation:_
@@ -173,7 +180,8 @@ def rf_zap(switch, onoff, stime):
     else:
         sendcode = sendcode | 12
     logging.debug('*** ZAP sendcode = %s', '{:08b}'.format(sendcode))
-    logging.info('<<< rf_zap schedule to send %s code %s for switch %s at time %s via %s',
+    logging.info('<<< rf_zap schedule to send %s code %s '
+                 'for switch %s at time %s via %s',
                  switch_state[onoff], sendcode, switch,
                  time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)),
                  config[switch]['rf_code'])
@@ -183,7 +191,8 @@ def rf_zap(switch, onoff, stime):
             argument=([config['DEFAULT']['rf433'],
                        str(sendcode), "1", str(pulse_zap)],))
     elif config[switch]['rf_code'] == "rpi-rf":
-        s.enterabs(stime, 1, rfdevice.tx_code, argument=(sendcode, 1, pulse_zap))
+        s.enterabs(stime, 1, rfdevice.tx_code,
+                   argument=(sendcode, 1, pulse_zap))
     else:
         logging.error(
             'rf_zap undefined rf_code for switch %s, check ini file!', switch)
@@ -191,7 +200,7 @@ def rf_zap(switch, onoff, stime):
 
 def rf_kopp(switch, onoff, stime):
     # Kopp code example
-    # 
+    #
     # kt004B130300100N
     # |||||||||||||||+-- Print output J/N
     # ||||||||||+++++--- Key pressed in ms
@@ -199,20 +208,21 @@ def rf_kopp(switch, onoff, stime):
     # ||++-------------- Key code on/off
     # ++---------------- kt = nanocul command for Kopp transmit
 
-    sendcode='kt'
+    sendcode = 'kt'
     if onoff:
         if config.has_option(switch, 'key_on'):
             sendcode += config[switch]['key_on']
         else:
             # calculate key_on from key_off by adding 0x10
-            sendcode += format(int(config[switch]['key_off'],base=16)+16,'X')
+            sendcode += format(int(config[switch]['key_off'], base=16)+16, 'X')
     else:
         sendcode += config[switch]['key_off']
     sendcode += (config[switch]['transmit_1']
                  + config[switch]['transmit_2']
                  + kopp_time + 'N')
     s.enterabs(stime, 1, send_ser, argument=(sendcode,))
-    logging.info('<<< rf_kopp schedule to send %s code %s to nanocul for switch % s at time %s',
+    logging.info('<<< rf_kopp schedule to send %s code %s '
+                 'to nanocul for switch % s at time %s',
                  switch_state[onoff], sendcode, switch,
                  time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)))
 
@@ -221,8 +231,10 @@ def gpio_switch(switch, onoff, stime):
     # Set the pin to output (just to be sure...)
     try:
         GPIO.setup(int(config[switch]['pin']), GPIO.OUT)
-    except:
-        logging.error('GPIO setup error for pin %d', config[switch]['pin'])
+    except RuntimeError as e:
+        logging.error('GPIO setup error for pin %d, error message: %s',
+                      config[switch]['pin'],
+                      e.message)
     # Can directly use the Boolean variable onoff since True=1=GPIO.HIGH
     s.enterabs(stime, 1, GPIO.output,
                argument=(int(config[switch]['pin']), onoff))
@@ -234,7 +246,7 @@ def gpio_pulse(switch, onoff, stime):
     # Set the pin to output (just to be sure...)
     try:
         GPIO.setup(int(config[switch]['pin']), GPIO.OUT)
-    except:
+    except RuntimeError:
         logging.error('GPIO setup error for pin %d', config[switch]['pin'])
 # Get the duration of the pulse
     if onoff:
@@ -260,41 +272,26 @@ def dummy_switch(switch, onoff, stime):
                argument=('Dummy event action: %s', onoff))
 
 
-def configure_logging(log_arg, update, file):
-    loglevel = {
-        'CRITICAL': 50,
-        'ERROR':    40,
-        'WARNING':  30,
-        'INFO':     20,
-        'DEBUG':    10,
-        'NOTSET':    0
-    }
-    # check if logfile is defined and can be opened for read
-    try:
-        logfile = open(config['LOGGING']['logfile'], 'r')
-        logfile.close()
-        log_exists = True
-        #-------------------------------------- print ('File exists',log_exists)
-    except:
-        log_exists = False
+def open_log_file(file):
     # check if logfile is defined and can be opened for write/append
+    # file = config['LOGGING']['logfile']
     try:
-        logfile = open(config['LOGGING']['logfile'], 'a')
+        logfile = open(file, 'a')
         logfile.close()
         # Remove all handlers associated with the root logger object.
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
         # Reconfigure logging again, this time with a file.
         logging.basicConfig(
-            filename=config['LOGGING']['logfile'],
+            filename=file,
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(module)s - %(message)s')
-    except:
-        if log_exists:
-            temp_log = config['LOGGING']['logfile'][:-4] \
+    except IOError as x:
+        if x.errno == errno.EACCES:
+            temp_log = file[:-4] \
                 + time.strftime("_%y-%m-%d_%H-%M")+".log"
             logging.error(
-                'Logfile is already in use by other process, '
+                'No write access to logfile, '
                 'using temp logfile: %s',
                 temp_log)
             try:  # try to open new logfile write
@@ -308,48 +305,47 @@ def configure_logging(log_arg, update, file):
                     filename=temp_log, level=logging.INFO,
                     format='%(asctime)s - %(module)s -'
                     ' %(levelname)s : %(message)s')
-            except:
+            except IOError:
                 logging.error(
                     'No write access for temp logfile, '
                     'using sdterr for logging.')
         else:
             logging.error('No (correct) filename defined, '
                           'using sdterr for logging.')
-    # log level set as command line parameter?
-    if log_arg is not None:
-        try:
-            logging.info('Set loglevel: %s', log_arg)
-            logging.getLogger().setLevel(loglevel[log_arg.upper()])
-            if update:
-                config.set('LOGGING','loglevel',log_arg.upper())
-                update_ini(file)
-        except:
-            print ('ERROR: Incorrect loging level specified, '
-                   'using log evel "ERROR"')
-            logging.getLogger().setLevel(logging.ERROR)
-    # if not, set logging level as defined in caltimer.ini
-    else:
-        logging.info('---------------------------------'
-                     '---------------------------------')
-        try:
-            logging.info('Set loglevel: %s', config['LOGGING']['loglevel'])
-            logging.getLogger().setLevel(
-                loglevel[config['LOGGING']['loglevel']])
-        except:
-            logging.error('No loglevel defined, using ERROR')
-            logging.getLogger().setLevel(logging.ERROR)
 
 
-def get_location(file,address):
-    response = requests.get('https://maps.googleapis.com/maps/api/geocode/json?address='+address)
+def set_log_level(log_arg, update, file):
+    loglevel = {
+        'CRITICAL': 50,
+        'ERROR':    40,
+        'WARNING':  30,
+        'INFO':     20,
+        'DEBUG':    10,
+        'NOTSET':    0
+    }
+    # set logging level
+    log_arg = log_arg.upper()
+    if log_arg not in loglevel:
+        log_arg = "ERROR"
+        logging.error('Incorrect loging level "%s" specified.', log_arg)
+    logging.info('Set loglevel: %s', log_arg)
+    logging.getLogger().setLevel(loglevel[log_arg.upper()])
+    if update and log_arg in loglevel:
+        config.set('LOGGING', 'loglevel', log_arg.upper())
+        update_ini(file)
+
+
+def get_location(file, address):
+    response = requests.get(
+        'https://maps.googleapis.com/maps/api/geocode/json?address='+address)
     resp_json_payload = response.json()
     latitude = resp_json_payload['results'][0]['geometry']['location']['lat']
     longitude = resp_json_payload['results'][0]['geometry']['location']['lng']
-    logging.info('Found coordinates for address %s: latitude=%s, longitude=%s', 
+    logging.info('Found coordinates for address %s: latitude=%s, longitude=%s',
                  address, latitude, longitude)
-    config.set('CALENDAR','latitude',str(latitude))
-    config.set('CALENDAR','longitude',str(longitude))
-    
+    config.set('CALENDAR', 'latitude', str(latitude))
+    config.set('CALENDAR', 'longitude', str(longitude))
+
 
 def update_ini(file):
     logging.warning('Saving updates to ini file')
@@ -370,11 +366,11 @@ def get_sun(offset, m_rise, m_set):
         rise_time = datetime.strptime(str(date.today())+" "+m_rise,
                                       "%Y-%m-%d %H:%M")
     if m_set is not None:
-        temp_time = str(date.today())+" "+args.sun_set
         set_time = datetime.strptime(str(date.today())+" "+m_set,
                                      "%Y-%m-%d %H:%M")
     logging.info('Sunrise %s, sunset %s', rise_time, set_time)
     return rise_time, set_time
+
 
 def switch_defined(switch):
     if not config.has_section(switch):
@@ -413,7 +409,7 @@ def main():
     # Raspberry Pi GPIO settings
     GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
-    
+
     # Comamnd line arguments
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawTextHelpFormatter)
@@ -445,31 +441,35 @@ def main():
     config.sections()
     config.read(args.init)
     if len(config) <= 1:
-        print ("ERROR: The specified ini file doesn't exit!")
+        print("ERROR: The specified ini file doesn't exit!")
         return
 
     # set logfile destination and log level
-    configure_logging(args.log, args.update, args.init)
-    
+    open_log_file(config['LOGGING']['logfile'])
+    set_log_level(args.log, args.update, args.init)
+
     if config.has_option('DEFAULT', 'pulselength'):
-        pulse_comag=int(config['DEFAULT']['pulselength'])
-        logging.debug('Setting pulse_comag = %s',pulse_comag)
-        
+        pulse_comag = int(config['DEFAULT']['pulselength'])
+        logging.debug('Setting pulse_comag = %s', pulse_comag)
+
     if config.has_option('DEFAULT', 'zap_pulse'):
-        pulse_zap=int(config['DEFAULT']['zap_pulse'])
-        logging.debug('Setting pulse_zap = %s',pulse_zap)
+        pulse_zap = int(config['DEFAULT']['zap_pulse'])
+        logging.debug('Setting pulse_zap = %s', pulse_zap)
 
     if config.has_option('DEFAULT', 'kopp_time'):
         kopp_time = config['DEFAULT']['kopp_time'].zfill(5)
-        logging.debug('Setting kopp_time = %s',kopp_time)
+        logging.debug('Setting kopp_time = %s', kopp_time)
 
     if config.has_option('DEFAULT', 'ser_port'):
         try:
-            logging.debug('Create serial interface %s',config['DEFAULT']['ser_port'])
+            logging.debug('Create serial interface %s',
+                          config['DEFAULT']['ser_port'])
             global ser
-            ser = serial.Serial(config['DEFAULT']['ser_port'], 38400, timeout=0)
-        except:
-            logging.error("Can't open serial port %s, check ini file.",config['DEFAULT']['ser_port'])
+            ser = serial.Serial(config['DEFAULT']['ser_port'],
+                                38400, timeout=0)
+        except serial.SerialException:
+            logging.error("Can't open serial port %s, check ini file.",
+                          config['DEFAULT']['ser_port'])
 
     # Enable RF transmitter
     global rfdevice
@@ -481,17 +481,17 @@ def main():
 
     # get coordinates from address
     if args.address is not None:
-        config.set('CALENDAR','location',args.address)
+        config.set('CALENDAR', 'location', args.address)
         get_location(args.init, args.address)
         if args.update:
             update_ini(args.init)
 
     # Set Caldav url
-    try:
+    if config.has_option('CALENDAR', 'caldav'):
         url = config['CALENDAR']['caldav']
-    except:
-        logging.error('Missing or incorrect ini file,'
-                      ' please check /etc/caltimer/caltimer.ini')
+    else:
+        logging.error('Missing caldav URL in config file,'
+                      ' please check %s', args.init)
         return
 
     # Scheduler interval in minutes
@@ -499,11 +499,11 @@ def main():
         if args.time_interval is not None:
             interval = int(args.time_interval)
             if args.update:
-                config.set('CALENDAR','interval',args.time_interval)
+                config.set('CALENDAR', 'interval', args.time_interval)
                 update_ini(args.init)
         else:
             interval = int(config['CALENDAR']['interval'])
-    except:
+    except ValueError:
         logging.error(
             'Defined scheduler time interval is not an integer number!')
         return
@@ -515,9 +515,8 @@ def main():
     client = caldav.DAVClient(url)
     try:
         principal = client.principal()
-    except:
-        e = sys.exc_info()[0]
-        logging.error('Error to access the web calendar: %s', e)
+    except requests.exceptions.RequestException as e:
+        logging.error('Error to access the web calendar: %s', e.message)
         return
     calendars = principal.calendars()
     if len(calendars) == 0:
@@ -537,13 +536,14 @@ def main():
         logging.info("Using calendar %s", calendar)
 
     # Specified calendar is available
-    
+
     # get start and end times for next time interval
     dt = datetime.today()
     # calculate next start time after current time
-    dt_start = dt + timedelta(minutes=interval - dt.minute % interval,
-                        seconds=-(dt.second % 60),
-                        microseconds=-(dt.microsecond % 1000000))
+    dt_start = dt + timedelta(
+        minutes=interval - dt.minute % interval,
+        seconds=-(dt.second % 60),
+        microseconds=-(dt.microsecond % 1000000))
     dt_end = dt_start + timedelta(minutes=interval)
 
     logging.info("Get events between: %s and %s", dt_start, dt_end)
@@ -552,16 +552,16 @@ def main():
         dt_end - timedelta(hours=tzoffset))
     logging.debug('%s events found for defined period.', len(results))
 
-    # is below required? Seems to be set again later 
+    # is below required? Seems to be set again later
     r_time_1 = 0
     r_time_2 = 0
 
     if len(results) > 0:
         # check if longitude/latitude is set in ini file
         # otherwise use location to query them from google maps
-        if not (config.has_option('CALENDAR','latitude') and 
-                config.has_option('CALENDAR','longitude')):
-            if config.has_option('CALENDAR','location'):
+        if not (config.has_option('CALENDAR', 'latitude') and
+                config.has_option('CALENDAR', 'longitude')):
+            if config.has_option('CALENDAR', 'location'):
                 logging.info('Get coordinates from location address')
                 get_location(args.init, config['CALENDAR']['location'])
                 if args.update:
@@ -571,8 +571,8 @@ def main():
                 return
 
         # get sunrise and sunset
-        rise_time, set_time = get_sun(tzoffset, args.sun_rise,args.sun_set)
-        
+        rise_time, set_time = get_sun(tzoffset, args.sun_rise, args.sun_set)
+
         # schedule events
         logging.debug('Define scheduler')
         global s
@@ -582,7 +582,7 @@ def main():
             e = event.instance.vevent
             schedule_start = False
             schedule_end = False
-            # check if the event has a known switch 
+            # check if the event has a known switch
             # defined in the location field
             if switch_defined(e.location.value):
                 # Calculate event start/end time for current date
@@ -596,13 +596,14 @@ def main():
                 e_end = e_end_dt.timestamp()
 
                 # check if start/stop events are in current time interval
-                schedule_start = ((e_start >= dt_start.timestamp()) and
-                           (e_start < dt_end.timestamp()))
+                schedule_start = (
+                    (e_start >= dt_start.timestamp()) and
+                    (e_start < dt_end.timestamp()))
                 schedule_end = (e_end <= dt_end.timestamp())
                 # has the event a recurrence rule?
-                try:
+                if hasattr(e, 'rrule'):
                     rrule = e.rrule.value
-                except:
+                else:
                     rrule = "-"
 
                 logging.debug(
@@ -619,18 +620,19 @@ def main():
                              rrule)
                 # clear event options from previous event
                 event_options = configparser.ConfigParser()
-                try:
+                if hasattr(e, 'description'):
                     description = e.description.value
-                except:
+                else:
                     logging.debug('No description for this event')
                     # define empty description to clear previous
                     description = '[DEFAULT]'
                 try:
                     event_options.read_string(description)
                     logging.debug('Description: %s', description)
-                except:
-                    logging.warning('Description incorrect for this event, '
-                                    'treating as empty (no options)')
+                except configparser.Error as e:
+                    logging.warning(
+                        'Description incorrect (%s) for this event, '
+                        'treating as empty (no options)', e.message)
 
                 # logging event options at DEBUG level
                 if logging.getLogger().getEffectiveLevel() <= logging.DEBUG:
@@ -652,7 +654,7 @@ def main():
                             r_time_1 = uniform(
                                 0, float(event_options['random']['all']) * 60)
                             r_time_2 = r_time_1
-                        except:
+                        except ValueError:
                             logging.error('Random all is incorrect!'
                                           ' Format is "all : 999"')
                     if event_options.has_option('random', 'start'):
@@ -660,8 +662,9 @@ def main():
                             # calculate random value from
                             # defined range
                             r_time_1 = uniform(
-                                0, float(event_options['random']['start']) * 60)
-                        except:
+                                0,
+                                float(event_options['random']['start']) * 60)
+                        except ValueError:
                             logging.error('Random start is incorrect!'
                                           ' Format is "start : 999"')
                     if event_options.has_option('random', 'end'):
@@ -669,7 +672,7 @@ def main():
                             # calculate random value from defined range
                             r_time_2 = uniform(
                                 0, float(event_options['random']['end']) * 60)
-                        except:
+                        except ValueError:
                             logging.error('Random end is incorrect!'
                                           ' Format is "end : 999"')
                 if event_options.has_section('sun'):
@@ -722,7 +725,7 @@ def main():
                                 # sunrise + offset
                                 e_start = e_start+(float(event_options[
                                     'sun']['start_offset']) * 60)
-                            except:
+                            except ValueError:
                                 logging.error(
                                     'Sunrise start offset format is'
                                     ' incorrect! Format is'
@@ -779,7 +782,7 @@ def main():
                                 # sunset + offset
                                 e_end = e_end + (float(event_options[
                                     'sun']['end_offset']) * 60)
-                            except:
+                            except ValueError:
                                 logging.error(
                                     'Sunset end offset format is'
                                     ' incorrect! Format is'
@@ -806,11 +809,11 @@ def main():
                         switch_type[config[e.location.value]['type']](
                             e.location.value, True, e_start+r_time_1)
                     except:
-                        logging.critical('Error: %s at %s + %s',
-                                         e.summary.value,
-                                         datetime.fromtimestamp(
-                                             e_start).strftime('%Y-%m-%d %H:%M:%S'),
-                                         r_time_1, '!')
+                        logging.critical(
+                            'Error: %s at %s + %s', e.summary.value,
+                            datetime.fromtimestamp(e_start).strftime(
+                                '%Y-%m-%d %H:%M:%S'),
+                            r_time_1, '!')
                 if schedule_end:
                     logging.debug(
                         'Switch off %s at %s %+.1f min',
@@ -822,11 +825,12 @@ def main():
                         switch_type[config[e.location.value]['type']](
                             e.location.value, False, e_end+r_time_2)
                     except:
-                        logging.critical('Error for %s at %s + %s',
-                                         e.summary.value,
-                                         datetime.fromtimestamp(
-                                             e_end).strftime('%Y-%m-%d %H:%M:%S'),
-                                         r_time_2)
+                        logging.critical(
+                            'Error for %s at %s + %s',
+                            e.summary.value,
+                            datetime.fromtimestamp(e_end).strftime(
+                                '%Y-%m-%d %H:%M:%S'),
+                            r_time_2)
                 else:
                     logging.debug('End time %s is after current scheduler'
                                   ' interval, skipping end of event.',
