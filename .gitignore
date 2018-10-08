@@ -4,3 +4,4 @@ nohup.out
 nanocul*.*
 .project
 .pydevproject
+test*.*
