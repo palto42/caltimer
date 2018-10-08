@@ -23,7 +23,7 @@
 #   end_offset : offset in minutes                      #
 #                                                       #
 # Matthias Homann                                       #
-# 2018-10-07                                            #
+# 2018-10-08                                            #
 # #######################################################
 
 import logging
@@ -382,6 +382,147 @@ def switch_defined(switch):
     return True
 
 
+def check_event(event, int_start, int_end):
+    # check if the event has a known switch
+    # defined in the location field
+    # Agruments:
+    #   event (dict) : event record to be checked
+    #   int_start : start time of current time_interval
+    #   int_end : end time of current time_interval
+    # Return:
+    #   start time in current interval (or None)
+    #   end time in current interval (or None)
+    #   Random time attribute (if defined)
+
+    if switch_defined(event.location.value):
+        # Calculate event start/end time for current date
+        # (required for recurring events)
+        # TODO: possible issue if interval would span across midnight
+        e_start_dt = datetime.combine(date.today(),
+                                      event.dtstart.value.time())
+        e_end_dt = datetime.combine(date.today(),
+                                    event.dtend.value.time())
+        e_start = e_start_dt.timestamp()
+        e_end = e_end_dt.timestamp()
+
+        # has the event a recurrence rule?
+        if hasattr(event, 'rrule'):
+            recurrence = event.rrule.value
+        else:
+            recurrence = "-"
+
+        logging.debug(
+            'Found event "%s" start: %s end: %s RRule: %s',
+            event.summary.value,
+            e_start_dt.strftime('%Y-%m-%d %H:%M:%S'),
+            e_end_dt.strftime('%Y-%m-%d %H:%M:%S'), recurrence)
+
+        # check if start/stop events are in current time interval
+        if (e_start < int_start.timestamp() or e_start >= int_end.timestamp()):
+            e_start = None
+        if e_end > int_end.timestamp():
+            e_end = None
+        return e_start, e_end
+    else:
+        logging.error(
+            'Switch "%s" undefined for event "%s" at %s',
+            event.location.value,
+            event.summary.value,
+            event.dtstart.value)
+        return None, None
+
+
+def get_random(rnd):
+    # rnd = event_options['random']
+    rnd_start_offset = 0
+    rnd_end_offset = 0
+    if 'all' in rnd:
+        try:
+            # calculate random value from
+            # defined range
+            rnd_start_offset = uniform(0, float(rnd['all']) * 60)
+            rnd_end_offset = rnd_start_offset
+        except ValueError:
+            logging.error('Random all is incorrect!'
+                          ' Format is "all : 999"')
+    if 'start' in rnd:
+            # calculate random value from
+            # defined range
+        try:
+            rnd_start_offset = uniform(0, float(rnd['start']) * 60)
+        except ValueError:
+            logging.error('Random start is incorrect!'
+                          ' Format is "start : 999"')
+    if 'end' in rnd:
+        try:
+            # calculate random value from defined range
+            rnd_end_offset = uniform(0, float(rnd['end']) * 60)
+        except ValueError:
+            logging.error('Random end is incorrect!'
+                          ' Format is "end : 999"')
+    return rnd_start_offset, rnd_end_offset
+
+
+def sun_rise(time, start):
+    return rise_time.timestamp()
+
+
+def before_rise(time, start):
+    if time > rise_time.timestamp():
+        if start:
+            # skip start event
+            return None
+        else:
+            return rise_time.timestamp()
+    else:
+        if start:
+            return rise_time.timestamp()
+        else:
+            return time
+
+
+def after_rise(time, start):
+    if time < rise_time.timestamp():
+        return rise_time.timestamp()
+    else:
+        return time
+
+
+def sun_set(time, start):
+    return set_time.timestamp()
+
+
+def before_set(time, start):
+    if time > set_time.timestamp():
+        if start:
+            return None
+        else:
+            return set_time.timestamp()
+    else:
+        if start:
+            return set_time.timestamp()
+        else:
+            return time
+
+
+def after_set(time, start):
+    if time < set_time.timestamp():
+        return set_time.timestamp()
+    else:
+        return time
+
+
+def add_offset(time, offset):
+    try:  # add start offset
+        # sunrise + offset
+        time = time+(float(offset) * 60)
+    except ValueError:
+        logging.error(
+            'Sun offset format is incorrect! Format is'
+            ' "start_offset : 999"')
+    return time
+
+
 #############################################################
 # MAIN                                                      #
 #############################################################
@@ -399,6 +540,15 @@ def main():
         'pulse': gpio_pulse,
         'dummy': dummy_switch,
         }
+
+    get_sun = {
+        "rise": sun_rise,
+        "before rise": before_rise,
+        "after rise": after_rise,
+        "set": sun_set,
+        "before set": before_set,
+        "after set": after_set,
+    }
 
     # Raspberry Pi GPIO settings
     GPIO.setmode(GPIO.BCM)
@@ -538,8 +688,8 @@ def main():
     logging.debug('%s events found for defined period.', len(results))
 
     # is below required? Seems to be set again later
-    r_time_1 = 0
-    r_time_2 = 0
+    rnd_start_offset = 0
+    rnd_end_offset = 0
 
     if len(results) > 0:
         # check if longitude/latitude is set in ini file
@@ -554,6 +704,9 @@ def main():
                 return
 
         # get sunrise and sunset
+# maybe change to struct "sun.rise" und "sun.set" ?
+        global rise_time
+        global set_time
         rise_time, set_time = get_sun(tzoffset, args.sun_rise, args.sun_set)
 
         # schedule events
@@ -563,44 +716,13 @@ def main():
         for event in results:
             event.load()
             e = event.instance.vevent
-            schedule_start = False
-            schedule_end = False
-            # check if the event has a known switch
-            # defined in the location field
-            if switch_defined(e.location.value):
-                # Calculate event start/end time for current date
-                # (required for recurring events)
-                # TODO: possible issue if interval would span across midnight
-                e_start_dt = datetime.combine(date.today(),
-                                              e.dtstart.value.time())
-                e_end_dt = datetime.combine(date.today(),
-                                            e.dtend.value.time())
-                e_start = e_start_dt.timestamp()
-                e_end = e_end_dt.timestamp()
 
-                # check if start/stop events are in current time interval
-                schedule_start = (
-                    (e_start >= dt_start.timestamp()) and
-                    (e_start < dt_end.timestamp()))
-                schedule_end = (e_end <= dt_end.timestamp())
-                # has the event a recurrence rule?
-                if hasattr(e, 'rrule'):
-                    rrule = e.rrule.value
-                else:
-                    rrule = "-"
-
-                logging.debug(
-                    'Found event "%s" start: %s end: %s RRule: %s',
-                    e.summary.value,
-                    e_start_dt.strftime('%Y-%m-%d %H:%M:%S'),
-                    e_end_dt.strftime('%Y-%m-%d %H:%M:%S'), rrule)
+            e_start,  e_end = check_event(e)
 
             # process event only if start or end is in current interval
-            if schedule_start or schedule_end:
-                logging.info('>>> Schedule event: %s starting at %s'
-                             ' (Frequency: %s)<<<',
-                             e.summary.value, e_start_dt.strftime("%H:%M"),
-                             rrule)
+            if e_start is not None or e_end is not None:
+                logging.info('>>> Schedule event: %s starting at %s <<<<',
+                             e.summary.value, e.dtstart.value)
                 # clear event options from previous event
                 event_options = configparser.ConfigParser()
                 if hasattr(e, 'description'):
@@ -610,6 +732,7 @@ def main():
                     # define empty description to clear previous
                     description = '[DEFAULT]'
                 try:
+                    # parse event options in desctription text
                     event_options.read_string(description)
                     logging.debug('Description: %s', description)
                 except configparser.Error as e:
@@ -626,194 +749,84 @@ def main():
                                 event_options.items(each_section)):
                             logging.debug('  %s : %s', each_key, each_val)
 
-                r_time_1 = 0
-                r_time_2 = 0
                 # if there are random numbers define
                 if event_options.has_section('random'):
-                    if event_options.has_option('random', 'all'):
-                        try:
-                            # calculate random value from
-                            # defined range
-                            r_time_1 = uniform(
-                                0, float(event_options['random']['all']) * 60)
-                            r_time_2 = r_time_1
-                        except ValueError:
-                            logging.error('Random all is incorrect!'
-                                          ' Format is "all : 999"')
-                    if event_options.has_option('random', 'start'):
-                        try:
-                            # calculate random value from
-                            # defined range
-                            r_time_1 = uniform(
-                                0,
-                                float(event_options['random']['start']) * 60)
-                        except ValueError:
-                            logging.error('Random start is incorrect!'
-                                          ' Format is "start : 999"')
-                    if event_options.has_option('random', 'end'):
-                        try:
-                            # calculate random value from defined range
-                            r_time_2 = uniform(
-                                0, float(event_options['random']['end']) * 60)
-                        except ValueError:
-                            logging.error('Random end is incorrect!'
-                                          ' Format is "end : 999"')
-                if event_options.has_section('sun'):
-                    # first check all possible start options
-                    if event_options.has_option('sun', 'start'):
-                        if event_options['sun']['start'] == "rise":
-                            e_start = rise_time.timestamp()
-                        elif event_options['sun']['start'] == "set":
-                            e_start = set_time.timestamp()
-                        elif event_options['sun']['start'] == "before rise":
-                            # start time is after sunrise
-                            # = skip event start
-                            if e_start > rise_time.timestamp():
-                                schedule_start = False
-                                logging.debug(
-                                    'Defined start is after sun rise, but'
-                                    ' should be before -> skipping event')
-                        elif event_options['sun']['start'] == "after rise":
-                            # start time is before sunrise,
-                            # set start = sun rise
-                            if e_start < rise_time.timestamp():
-                                e_start = rise_time.timestamp()
-                                logging.debug(
-                                    'Defined start time is before sun rise,'
-                                    ' but should be after -> setting start'
-                                    ' time = sun rise')
-                        elif event_options['sun']['start'] == "before set":
-                            # start time is after sun set,
-                            # skip event start
-                            if e_start > set_time.timestamp():
-                                schedule_start = False
-                                logging.debug(
-                                    'Defined start is after sun set, but'
-                                    ' should be before -> skipping event')
-                        elif event_options['sun']['start'] == "after set":
-                            # start time is before sun set,
-                            # set start = sun set
-                            if e_start < set_time.timestamp():
-                                e_start = set_time.timestamp()
-                                logging.debug(
-                                    'Defined start time is before sun'
-                                    ' set, but should be after ->'
-                                    ' setting start time = sun set')
-                        else:
-                            logging.error(
-                                'Sunrise start time option is incorrect,'
-                                ' valid options are "rise" or "set"')
-                        if event_options.has_option('sun', 'start_offset'):
-                            try:  # add start offset
-                                # sunrise + offset
-                                e_start = e_start+(float(event_options[
-                                    'sun']['start_offset']) * 60)
-                            except ValueError:
-                                logging.error(
-                                    'Sunrise start offset format is'
-                                    ' incorrect! Format is'
-                                    ' "start_offset : 999"')
-                    # now check all the end options
-                    if event_options.has_option('sun', 'end'):
-                        if event_options['sun']['end'] == "rise":
-                            e_end = rise_time.timestamp()
-                        elif event_options['sun']['end'] == "set":
-                            e_end = set_time.timestamp()
-                        elif event_options['sun']['end'] == "before rise":
-                            # end time is after sunrise,
-                            # set end = sun rise
-                            if e_end > rise_time.timestamp():
-                                e_end = rise_time.timestamp()
-                                logging.debug(
-                                    'Defined end time is after sun'
-                                    ' rise, but should be before ->'
-                                    ' setting end time = sun rise')
-                        elif event_options['sun']['end'] == "after rise":
-                            # end time is before sunrise,
-                            # set end = sun rise
-                            if e_end < rise_time.timestamp():
-                                e_end = rise_time.timestamp()
-                                logging.debug(
-                                    'Defined end time is before sun'
-                                    ' rise, but should be after ->'
-                                    ' setting end time = sun rise')
-                        elif event_options['sun']['end'] == "before set":
-                            # end time is after sun set,
-                            # set end  = sun set
-                            if e_end > set_time.timestamp():
-                                e_end = set_time.timestamp()
-                                logging.debug(
-                                    'Defined end time is after sun '
-                                    'set, but should be before ->'
-                                    ' setting end time = sun set')
-                        elif event_options['sun']['end'] == "after set":
-                            # end time is before sun set,
-                            # set end = sun set
-                            if e_end < set_time.timestamp():
-                                e_end = set_time.timestamp()
-                                logging.debug(
-                                    'Defined end time is before sun'
-                                    ' set, but should be after ->'
-                                    ' setting end time = sun set')
-                        else:
-                            logging.error(
-                                'Sunrise end time option is '
-                                'incorrect, valid options are'
-                                ' "rise" or "set"')
-                        if event_options.has_option('sun', 'end_offset'):
-                            try:  # add end offset
-                                # sunset + offset
-                                e_end = e_end + (float(event_options[
-                                    'sun']['end_offset']) * 60)
-                            except ValueError:
-                                logging.error(
-                                    'Sunset end offset format is'
-                                    ' incorrect! Format is'
-                                    ' "end_offset : 999"')
+                    rnd_start_offset, rnd_end_offset = get_random(
+                        event_options['random'])
+                else:
+                    rnd_start_offset = 0
+                    rnd_end_offset = 0
+
+                # check sun start option
+                if (e_start is not None and
+                        event_options.has_option('sun', 'start') and
+                        event_options['sun']['start'] in get_sun):
+                    e_start = get_sun[event_options['sun']['start']](
+                        e_start, True)
+                if (e_start is not None and
+                        event_options.has_option('sun', 'start_offset')):
+                    e_start = add_offset(
+                        e_start, event_options['sun']['start_offset'])
+                # now check sun end option
+                if (e_end is not None and
+                        event_options.has_option('sun', 'end') and
+                        event_options['sun']['end'] in get_sun):
+                    e_end = get_sun[event_options['sun']['end']](
+                        e_end, False)
+                if (e_end is not None and
+                        event_options.has_option('sun', 'end_offset')):
+                    e_end = add_offset(
+                        e_end, event_options['sun']['end_offset'])
 
                 # check if calculated start time is after the
                 # calculated end time => skip start event
                 # (keep end to ensure that "off" is sent)
-                if e_start+r_time_1 >= e_end+r_time_2:
-                    schedule_start = False
+                if e_start+rnd_start_offset >= e_end+rnd_end_offset:
+                    e_start = None
                     logging.debug('Start time is after end time,'
                                   ' skipping start of event.')
                 # re-check end time
                 # >> not required (causes issues!)
                 # schedule_end = (e_end <= dt_end.timestamp())
-                if schedule_start:
+                if e_start is not None:
                     logging.debug(
                         'Switch on %s at %s %+.1f min',
                         e.location.value,
-                        datetime.fromtimestamp(e_start+r_time_1).strftime(
+                        datetime.fromtimestamp(
+                            e_start+rnd_start_offset).strftime(
                             '%Y-%m-%d %H:%M:%S'),
-                        r_time_1 / 60)
+                        rnd_start_offset / 60)
                     try:
                         switch_type[config[e.location.value]['rf_type']](
-                            e.location.value, True, e_start+r_time_1)
-                    except:
+                            e.location.value, True, e_start+rnd_start_offset)
+                    except KeyError:
                         logging.critical(
-                            'Error: %s at %s + %s', e.summary.value,
+                            'RF type "%s" of switch "%s" for event event "%s" '
+                            'at %s is undefined',
+                            config[e.location.value]['rf_type'],
+                            e.location.value,
+                            e.summary.value,
                             datetime.fromtimestamp(e_start).strftime(
-                                '%Y-%m-%d %H:%M:%S'),
-                            r_time_1, '!')
-                if schedule_end:
+                                '%Y-%m-%d %H:%M:%S'), '!')
+                if e_end is not None:
                     logging.debug(
                         'Switch off %s at %s %+.1f min',
                         e.location.value,
-                        datetime.fromtimestamp(e_end+r_time_2).strftime(
+                        datetime.fromtimestamp(e_end+rnd_end_offset).strftime(
                             '%Y-%m-%d %H:%M:%S'),
-                        r_time_2 / 60)
+                        rnd_end_offset / 60)
                     try:
                         switch_type[config[e.location.value]['rf_type']](
-                            e.location.value, False, e_end+r_time_2)
-                    except:
+                            e.location.value, False, e_end+rnd_end_offset)
+                    except KeyError:
                         logging.critical(
-                            'Error for %s at %s + %s',
+                            'RF type "%s" of switch "%s" for event event "%s" '
+                            'at %s is undefined',
+                            config[e.location.value]['rf_type'],
+                            e.location.value,
                             e.summary.value,
                             datetime.fromtimestamp(e_end).strftime(
-                                '%Y-%m-%d %H:%M:%S'),
-                            r_time_2)
+                                '%Y-%m-%d %H:%M:%S'), '!')
                 else:
                     logging.debug('End time %s is after current scheduler'
                                   ' interval, skipping end of event.',
