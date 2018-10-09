@@ -38,11 +38,25 @@ from random import uniform
 import caldav
 # from caldav.elements import dav, cdav
 from sunrise_sunset import SunriseSunset
-import RPi.GPIO as GPIO
-from rpi_rf import RFDevice
+try:
+    import RPi.GPIO as GPIO
+except ImportError:
+    pass  # don't use GPIO as switch output
+try:
+    from rpi_rf import RFDevice
+except ImportError:
+    pass  # don't use pri-rf
 import argparse
 import requests
 import serial
+from dataclasses import dataclass  # obsolete with Python 3.7
+
+
+@dataclass
+class Interval:
+    start: float = 0
+    end: float = 0
+
 
 switch_state = {
     True: "ON",
@@ -188,7 +202,7 @@ def rf_zap(switch, onoff, stime):
                  switch_state[onoff], sendcode, switch,
                  time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stime)),
                  config[switch]['rf433_tool'])
-    if config[switch]['rf433_tool'] == "rf433":
+    if config[switch]['rf433_tool'] == "codesend":
         s.enterabs(
             stime, 1, subprocess.call,
             argument=([config['DEFAULT']['codesend_path'],
@@ -318,7 +332,7 @@ def open_log_file(file):
                           'using sdterr for logging.')
 
 
-def set_log_level(log_arg, update, file):
+def set_log_level(log_arg):
     loglevel = {
         'CRITICAL': 50,
         'ERROR':    40,
@@ -328,12 +342,13 @@ def set_log_level(log_arg, update, file):
         'NOTSET':    0
     }
     # set logging level
-    log_arg = log_arg.upper()
-    if log_arg not in loglevel:
-        log_arg = "ERROR"
-        logging.error('Incorrect loging level "%s" specified.', log_arg)
-    logging.info('Set loglevel: %s', log_arg)
-    logging.getLogger().setLevel(loglevel[log_arg.upper()])
+    if log_arg is not None:
+        log_arg = log_arg.upper()
+        if log_arg not in loglevel:
+            log_arg = "ERROR"
+            logging.error('Incorrect loging level "%s" specified.', log_arg)
+        logging.info('Set loglevel: %s', log_arg)
+        logging.getLogger().setLevel(loglevel[log_arg.upper()])
 
 
 def get_location(file, address):
@@ -348,7 +363,7 @@ def get_location(file, address):
     config.set('CALENDAR', 'longitude', str(longitude))
 
 
-def get_sun(offset, m_rise, m_set):
+def get_sun_time(offset=0):
     # calculate sunrise and sunset times for specified location
     ro = SunriseSunset(
         datetime.now(), latitude=float(config['CALENDAR']['latitude']),
@@ -356,12 +371,6 @@ def get_sun(offset, m_rise, m_set):
         localOffset=offset)
     rise_time, set_time = ro.calculate()
     # overwrite sun times for test purposes
-    if m_rise is not None:
-        rise_time = datetime.strptime(str(date.today())+" "+m_rise,
-                                      "%Y-%m-%d %H:%M")
-    if m_set is not None:
-        set_time = datetime.strptime(str(date.today())+" "+m_set,
-                                     "%Y-%m-%d %H:%M")
     logging.info('Sunrise %s, sunset %s', rise_time, set_time)
     return rise_time, set_time
 
@@ -398,12 +407,13 @@ def check_event(event, int_start, int_end):
         # Calculate event start/end time for current date
         # (required for recurring events)
         # TODO: possible issue if interval would span across midnight
-        e_start_dt = datetime.combine(date.today(),
-                                      event.dtstart.value.time())
-        e_end_dt = datetime.combine(date.today(),
-                                    event.dtend.value.time())
-        e_start = e_start_dt.timestamp()
-        e_end = e_end_dt.timestamp()
+        e_time = Interval()
+        start_dt = datetime.combine(date.today(),
+                                    event.dtstart.value.time())
+        end_dt = datetime.combine(date.today(),
+                                  event.dtend.value.time())
+        e_time.start = start_dt.timestamp()
+        e_time.end = end_dt.timestamp()
 
         # has the event a recurrence rule?
         if hasattr(event, 'rrule'):
@@ -414,100 +424,182 @@ def check_event(event, int_start, int_end):
         logging.debug(
             'Found event "%s" start: %s end: %s RRule: %s',
             event.summary.value,
-            e_start_dt.strftime('%Y-%m-%d %H:%M:%S'),
-            e_end_dt.strftime('%Y-%m-%d %H:%M:%S'), recurrence)
+            start_dt.strftime('%Y-%m-%d %H:%M:%S'),
+            end_dt.strftime('%Y-%m-%d %H:%M:%S'), recurrence)
 
         # check if start/stop events are in current time interval
-        if (e_start < int_start.timestamp() or e_start >= int_end.timestamp()):
-            e_start = None
-        if e_end > int_end.timestamp():
-            e_end = None
-        return e_start, e_end
+        if (e_time.start < int_start.timestamp() or
+                e_time.start >= int_end.timestamp()):
+            e_time.start = None
+        if e_time.end > int_end.timestamp():
+            e_time.end = None
+        return e_time
     else:
         logging.error(
             'Switch "%s" undefined for event "%s" at %s',
             event.location.value,
             event.summary.value,
             event.dtstart.value)
-        return None, None
+        return Interval(None, None)
 
 
-def get_random(rnd):
+def get_random(e_time, rnd):
     # rnd = event_options['random']
-    rnd_start_offset = 0
-    rnd_end_offset = 0
+    rnd_offset = Interval()
+
     if 'all' in rnd:
-        try:
-            # calculate random value from
-            # defined range
-            rnd_start_offset = uniform(0, float(rnd['all']) * 60)
-            rnd_end_offset = rnd_start_offset
-        except ValueError:
-            logging.error('Random all is incorrect!'
-                          ' Format is "all : 999"')
+        rnd_offset.start = rnd_to_float(rnd, 'all')
+        rnd_offset.end = rnd_to_float(rnd, 'all')
+
     if 'start' in rnd:
-            # calculate random value from
-            # defined range
-        try:
-            rnd_start_offset = uniform(0, float(rnd['start']) * 60)
-        except ValueError:
-            logging.error('Random start is incorrect!'
-                          ' Format is "start : 999"')
-    if 'end' in rnd:
-        try:
-            # calculate random value from defined range
-            rnd_end_offset = uniform(0, float(rnd['end']) * 60)
-        except ValueError:
-            logging.error('Random end is incorrect!'
-                          ' Format is "end : 999"')
-    return rnd_start_offset, rnd_end_offset
+        rnd_offset.end = rnd_to_float(rnd, 'end')
+
+    logging.debug("Add random start: %+.1f min, end: %+.1f min",
+                  rnd_offset.start/60,
+                  rnd_offset.end/60)
+    if e_time.start is not None:
+        e_time.start = e_time.start + rnd_offset.start
+    if e_time.end is not None:
+        e_time.end = e_time.end + rnd_offset.end
+    return e_time
 
 
-def sun_rise(time, start):
-    return rise_time.timestamp()
+def rnd_to_float(list, index):
+    try:
+        # calculate random value in seconds from defined range in minutes
+        return uniform(0, float(list[index]) * 60)
+    except ValueError:
+        logging.error('Random "%s: %s" is incorrect! Format is "all : 999"',
+                      index, list[index])
+        return 0
 
 
-def before_rise(time, start):
-    if time > rise_time.timestamp():
+def time_to_str(time):
+    try:
+        return datetime.fromtimestamp(time)
+    except TypeError:
+        return "None"
+
+
+def int_to_str(interval):
+    try:
+        int_str = datetime.fromtimestamp(
+            interval.start).strftime("%Y-%m-%d %H:%M:%S") + " to "
+    except TypeError:
+        int_str = "None to "
+    try:
+        int_str += datetime.fromtimestamp(
+            interval.end).strftime("%Y-%m-%d %H:%M:%S")
+    except TypeError:
+        int_str += "None"
+    return int_str
+
+
+def use_sun(e_time, sun_opt, time_interval):
+    get_sun = {
+        "rise": sun_rise,
+        "before rise": before_rise,
+        "after rise": after_rise,
+        "set": sun_set,
+        "before set": before_set,
+        "after set": after_set,
+    }
+    # check sun start option
+    if (e_time.start is not None and
+            'start' in sun_opt and
+            sun_opt['start'] in get_sun):
+        if ('start_offset' in sun_opt):
+            offset = sun_opt['start_offset']
+        else:
+            offset = 0
+        e_time.start = check_interval(
+            get_sun[sun_opt['start']](e_time.start, True, offset),
+            time_interval)
+    # now check sun end option
+    if (e_time.end is not None and
+            'end' in sun_opt and
+            sun_opt['end'] in get_sun):
+        if ('end_offset' in sun_opt):
+            offset = sun_opt['end_offset']
+        else:
+            offset = 0
+        e_time.end = check_interval(
+            get_sun[sun_opt['end']](e_time.end, False, offset),
+            time_interval)
+    return e_time
+
+
+def check_interval(time, time_interval):
+    # ensure that the tim is within the current interval
+    if time is not None:
+        time = max(time, time_interval.start.timestamp())
+        time = min(time, time_interval.end.timestamp())
+    return time
+
+
+def sun_rise(time, start, offset):
+    logging.debug("%s event at %s uses sun rise at %s.",
+                  switch_state[start],
+                  time_to_str(time),
+                  time_to_str(add_offset(rise_time.timestamp(), offset)))
+    return max(time, add_offset(rise_time.timestamp(), offset))
+
+
+def before_rise(time, start, offset):
+    t = add_offset(rise_time.timestamp(), offset)
+    if time > t:
         if start:
             # skip start event
             return None
         else:
-            return rise_time.timestamp()
+            return t
     else:
         if start:
-            return rise_time.timestamp()
+            return t
         else:
             return time
 
 
-def after_rise(time, start):
+def after_rise(time, start, offset):
+    t = add_offset(rise_time.timestamp(), offset)
     if time < rise_time.timestamp():
-        return rise_time.timestamp()
+        logging.debug("Time %s < after rise %s, setting to rise",
+                      time,
+                      t)
+        return t
     else:
+        logging.debug("Time %s >= after rise %s, keep time",
+                      time,
+                      t)
         return time
 
 
-def sun_set(time, start):
-    return set_time.timestamp()
+def sun_set(time, start, offset):
+    logging.debug("%s event at %s uses sun set at %s.",
+                  switch_state[start],
+                  time_to_str(time),
+                  time_to_str(add_offset(set_time.timestamp(), offset)))
+    return min(time, add_offset(set_time.timestamp(), offset))
 
 
-def before_set(time, start):
-    if time > set_time.timestamp():
+def before_set(time, start, offset):
+    t = add_offset(set_time.timestamp(), offset)
+    if time > t:
         if start:
             return None
         else:
-            return set_time.timestamp()
+            return t
     else:
         if start:
-            return set_time.timestamp()
+            return t
         else:
             return time
 
 
-def after_set(time, start):
-    if time < set_time.timestamp():
-        return set_time.timestamp()
+def after_set(time, start, offset):
+    t = add_offset(set_time.timestamp(), offset)
+    if time < t:
+        return t
     else:
         return time
 
@@ -515,12 +607,35 @@ def after_set(time, start):
 def add_offset(time, offset):
     try:  # add start offset
         # sunrise + offset
-        time = time+(float(offset) * 60)
+        o_time = time+(float(offset) * 60)
     except ValueError:
+        o_time = time
         logging.error(
             'Sun offset format is incorrect! Format is'
-            ' "start_offset : 999"')
-    return time
+            ' "xxx_offset : 999"')
+    return o_time
+
+
+def schedule_switch(time, switch, status):
+    if time is not None:
+        logging.debug(
+            'Switch %s %s at %s',
+            switch_state[status],
+            switch,
+            datetime.fromtimestamp(
+                time).strftime(
+                '%Y-%m-%d %H:%M:%S'))
+        if config[switch]['rf_type'] in switch_type:
+            switch_type[config[switch]['rf_type']](switch, status, time)
+        else:
+            logging.critical(
+                'RF type "%s" of switch "%s" is undefined!',
+                config[switch]['rf_type'],
+                switch)
+    else:
+        logging.debug(
+            '%s time for switch "%s" is not in current time interval.',
+            switch_state[status], switch)
 
 
 #############################################################
@@ -540,15 +655,6 @@ def main():
         'pulse': gpio_pulse,
         'dummy': dummy_switch,
         }
-
-    get_sun = {
-        "rise": sun_rise,
-        "before rise": before_rise,
-        "after rise": after_rise,
-        "set": sun_set,
-        "before set": before_set,
-        "after set": after_set,
-    }
 
     # Raspberry Pi GPIO settings
     GPIO.setmode(GPIO.BCM)
@@ -589,8 +695,9 @@ def main():
         return
 
     # set logfile destination and log level
-    open_log_file(config['LOGGING']['logfile'])
-    set_log_level(args.log, args.update, args.init)
+    if config.has_option('LOGGING', 'logfile'):
+        open_log_file(config['LOGGING']['logfile'])
+    set_log_level(args.log)
 
     if config.has_option('DEFAULT', 'zap_pulse'):
         pulse_zap = int(config['DEFAULT']['zap_pulse'])
@@ -608,13 +715,20 @@ def main():
             ser = serial.Serial(config['DEFAULT']['ser_port'],
                                 38400, timeout=0)
         except serial.SerialException:
-            logging.error("Can't open serial port %s, check ini file.",
+            ser = open("/tmp/serial.txt", "wb")
+            logging.error("Can't open serial port %s, check ini file "
+                          "(writing to /tmp/serial.txt instead)",
                           config['DEFAULT']['ser_port'])
+    else:
+        ser = open("/tmp/serial.txt", "wb")
 
     # Enable RF transmitter
     global rfdevice
-    rfdevice = RFDevice(int(config['DEFAULT']['rf433_gpio']))
-    rfdevice.enable_tx()
+    if config.has_option('DEFAULT', 'rf433_gpio'):
+        rfdevice = RFDevice(int(config['DEFAULT']['rf433_gpio']))
+        rfdevice.enable_tx()
+    else:
+        logging.info('No GPIO for RF433 tool "rpi-rf" defined.')
 
     # Time zone offset
     tzoffset = datetime.today().hour-datetime.utcnow().hour
@@ -632,12 +746,13 @@ def main():
                       ' please check %s', args.init)
         return
 
+    interval = Interval()
     # Scheduler interval in minutes
     try:
         if args.time_interval is not None:
-            interval = int(args.time_interval)
+            interval_span = int(args.time_interval)
         else:
-            interval = int(config['DEFAULT']['interval'])
+            interval_span = int(config['DEFAULT']['interval'])
     except ValueError:
         logging.error(
             'Defined scheduler time interval is not an integer number!')
@@ -675,21 +790,17 @@ def main():
     # get start and end times for next time interval
     dt = datetime.today()
     # calculate next start time after current time
-    dt_start = dt + timedelta(
-        minutes=interval - dt.minute % interval,
+    interval.start = dt + timedelta(
+        minutes=interval_span - dt.minute % interval_span,
         seconds=-(dt.second % 60),
         microseconds=-(dt.microsecond % 1000000))
-    dt_end = dt_start + timedelta(minutes=interval)
+    interval.end = interval.start + timedelta(minutes=interval_span)
 
-    logging.info("Get events between: %s and %s", dt_start, dt_end)
+    logging.info("Get events between: %s and %s", interval.start, interval.end)
     results = calendar.date_search(
-        dt_start - timedelta(hours=tzoffset),
-        dt_end - timedelta(hours=tzoffset))
+        interval.start - timedelta(hours=tzoffset),
+        interval.end - timedelta(hours=tzoffset))
     logging.debug('%s events found for defined period.', len(results))
-
-    # is below required? Seems to be set again later
-    rnd_start_offset = 0
-    rnd_end_offset = 0
 
     if len(results) > 0:
         # check if longitude/latitude is set in ini file
@@ -707,7 +818,13 @@ def main():
 # maybe change to struct "sun.rise" und "sun.set" ?
         global rise_time
         global set_time
-        rise_time, set_time = get_sun(tzoffset, args.sun_rise, args.sun_set)
+        rise_time, set_time = get_sun_time(tzoffset)
+        if args.sun_rise is not None:
+            rise_time = datetime.strptime(
+                str(date.today())+" "+args.sun_rise, "%Y-%m-%d %H:%M")
+        if args.sun_set is not None:
+            set_time = datetime.strptime(
+                str(date.today())+" "+args.sun_set, "%Y-%m-%d %H:%M")
 
         # schedule events
         logging.debug('Define scheduler')
@@ -717,10 +834,10 @@ def main():
             event.load()
             e = event.instance.vevent
 
-            e_start,  e_end = check_event(e)
+            e_time = check_event(e, interval.start, interval.end)
 
             # process event only if start or end is in current interval
-            if e_start is not None or e_end is not None:
+            if e_time.start is not None or e_time.end is not None:
                 logging.info('>>> Schedule event: %s starting at %s <<<<',
                              e.summary.value, e.dtstart.value)
                 # clear event options from previous event
@@ -749,89 +866,32 @@ def main():
                                 event_options.items(each_section)):
                             logging.debug('  %s : %s', each_key, each_val)
 
+                # check sun options
+                logging.debug('Initial event time: %s',
+                              int_to_str(e_time))
+                if (event_options.has_section('sun')):
+                    e_time = use_sun(e_time,
+                                     event_options['sun'],
+                                     interval)
+                logging.debug('After processing "sun" section: %s',
+                              int_to_str(e_time))
                 # if there are random numbers define
                 if event_options.has_section('random'):
-                    rnd_start_offset, rnd_end_offset = get_random(
-                        event_options['random'])
-                else:
-                    rnd_start_offset = 0
-                    rnd_end_offset = 0
-
-                # check sun start option
-                if (e_start is not None and
-                        event_options.has_option('sun', 'start') and
-                        event_options['sun']['start'] in get_sun):
-                    e_start = get_sun[event_options['sun']['start']](
-                        e_start, True)
-                if (e_start is not None and
-                        event_options.has_option('sun', 'start_offset')):
-                    e_start = add_offset(
-                        e_start, event_options['sun']['start_offset'])
-                # now check sun end option
-                if (e_end is not None and
-                        event_options.has_option('sun', 'end') and
-                        event_options['sun']['end'] in get_sun):
-                    e_end = get_sun[event_options['sun']['end']](
-                        e_end, False)
-                if (e_end is not None and
-                        event_options.has_option('sun', 'end_offset')):
-                    e_end = add_offset(
-                        e_end, event_options['sun']['end_offset'])
-
+                    e_time = get_random(e_time, event_options['random'])
+                logging.debug('After processing "random" section: %s',
+                              int_to_str(e_time))
                 # check if calculated start time is after the
                 # calculated end time => skip start event
                 # (keep end to ensure that "off" is sent)
-                if e_start+rnd_start_offset >= e_end+rnd_end_offset:
-                    e_start = None
+                if (e_time.start is not None and e_time.end is not None and
+                        e_time.start >= e_time.end):
+                    e_time.start = None
                     logging.debug('Start time is after end time,'
                                   ' skipping start of event.')
-                # re-check end time
-                # >> not required (causes issues!)
-                # schedule_end = (e_end <= dt_end.timestamp())
-                if e_start is not None:
-                    logging.debug(
-                        'Switch on %s at %s %+.1f min',
-                        e.location.value,
-                        datetime.fromtimestamp(
-                            e_start+rnd_start_offset).strftime(
-                            '%Y-%m-%d %H:%M:%S'),
-                        rnd_start_offset / 60)
-                    try:
-                        switch_type[config[e.location.value]['rf_type']](
-                            e.location.value, True, e_start+rnd_start_offset)
-                    except KeyError:
-                        logging.critical(
-                            'RF type "%s" of switch "%s" for event event "%s" '
-                            'at %s is undefined',
-                            config[e.location.value]['rf_type'],
-                            e.location.value,
-                            e.summary.value,
-                            datetime.fromtimestamp(e_start).strftime(
-                                '%Y-%m-%d %H:%M:%S'), '!')
-                if e_end is not None:
-                    logging.debug(
-                        'Switch off %s at %s %+.1f min',
-                        e.location.value,
-                        datetime.fromtimestamp(e_end+rnd_end_offset).strftime(
-                            '%Y-%m-%d %H:%M:%S'),
-                        rnd_end_offset / 60)
-                    try:
-                        switch_type[config[e.location.value]['rf_type']](
-                            e.location.value, False, e_end+rnd_end_offset)
-                    except KeyError:
-                        logging.critical(
-                            'RF type "%s" of switch "%s" for event event "%s" '
-                            'at %s is undefined',
-                            config[e.location.value]['rf_type'],
-                            e.location.value,
-                            e.summary.value,
-                            datetime.fromtimestamp(e_end).strftime(
-                                '%Y-%m-%d %H:%M:%S'), '!')
-                else:
-                    logging.debug('End time %s is after current scheduler'
-                                  ' interval, skipping end of event.',
-                                  datetime.fromtimestamp(
-                                      e_end).strftime('%Y-%m-%d %H:%M:%S'))
+
+                # schedule_time.end = (e_time.end <= interval.end.timestamp())
+                schedule_switch(e_time.start, e.location.value, True)
+                schedule_switch(e_time.end, e.location.value, False)
             else:
                 logging.debug('Start and end time are not in current'
                               ' interval, skipping...')
@@ -841,10 +901,9 @@ def main():
         s.run()
         logging.info('<><><> Completed scheduled events'
                      ' for this time interval. <><><>')
-        try:
+        if ser is not None:
             ser.close()
-        finally:
-            logging.debug('No serial used, nothing to close.')
+
     else:
         logging.info('<> No calendar events in this time interval. <>')
 
