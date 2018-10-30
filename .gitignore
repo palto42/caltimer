@@ -5,3 +5,4 @@ nanocul*.*
 .project
 .pydevproject
 test*.*
+*.bak
