@@ -123,10 +123,12 @@ def rf_comag(switch, onoff, stime):
     if config[switch]['rf_code'] == "rf433":
         s.enterabs(stime, 1, subprocess.call,
                    argument=([config['DEFAULT']['rf433'],
-                              str(sendcode), "1", int(config[switch]['rf433_pulse'])],))
+                              str(sendcode), "1",
+                              int(config[switch]['rf433_pulse'])],))
     elif config[switch]['rf_code'] == "rpi-rf":
         s.enterabs(stime, 1, rfdevice.tx_code,
-                   argument=(int(sendcode), 1, int(config[switch]['rf433_pulse']))
+                   argument=(int(sendcode), 1,
+                             int(config[switch]['rf433_pulse'])))
     else:
         logging.error(
             'rf_comag undefined rf_code for switch %s, check ini file!',
